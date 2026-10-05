@@ -3850,11 +3850,18 @@ export default function ChatView(props: ChatViewProps) {
     readonly threadKey: string | null;
     readonly projection: TimelineEntriesProjection;
   } | null>(null);
+  const timelineVisibleTurnItems = useMemo(
+    () =>
+      embedded && serverThread?.sidechatSource
+        ? serverVisibleTurnItems.filter((row) => row.visibility === "local")
+        : serverVisibleTurnItems,
+    [embedded, serverThread?.sidechatSource, serverVisibleTurnItems],
+  );
   const serverTimelineEntries = useMemo(() => {
     const previous = timelineProjectionRef.current;
     const projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(
       {
-        visibleTurnItems: serverVisibleTurnItems,
+        visibleTurnItems: timelineVisibleTurnItems,
         optimisticMessages: optimisticUserMessages,
         anchoredMessages: anchoredTimelineMessages,
         attachmentUrlById: timelineAttachmentUrlById,
@@ -3874,7 +3881,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey,
     anchoredTimelineMessages,
     optimisticUserMessages,
-    serverVisibleTurnItems,
+    timelineVisibleTurnItems,
     serverProjection,
     timelineAttachmentUrlById,
   ]);
@@ -10907,8 +10914,10 @@ export default function ChatView(props: ChatViewProps) {
               className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
             />
           ) : null}
-          {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
-          {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
+          {!embedded && !rightPanelControlsAtRoot && !rightPanelControlsInPanel
+            ? panelLayoutControls
+            : null}
+          {!embedded && inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
           <ChatHeader
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}

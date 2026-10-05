@@ -1,4 +1,4 @@
-import { act, type ReactNode } from "react";
+import { act, useEffect, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import {
   EnvironmentId,
@@ -12,18 +12,19 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   shells: [] as unknown[],
   fork: vi.fn(),
-  start: vi.fn(),
+  drafts: new Map<string, string>(),
+  setPrompt: vi.fn(),
+  mounts: new Map<string, number>(),
   wait: vi.fn(),
 }));
 vi.mock("~/state/threads", () => ({
-  threadEnvironment: { forkFromRun: "fork", startTurn: "start" },
+  threadEnvironment: { forkFromRun: "fork" },
 }));
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: (command: string) => (command === "fork" ? state.fork : state.start),
+  useAtomCommand: () => state.fork,
 }));
 vi.mock("~/state/entities", () => ({
   useThreadShells: () => state.shells,
-  readThreadShell: () => ({ runtimeMode: "full-access", interactionMode: "default" }),
   waitForThreadShell: state.wait,
 }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
@@ -41,7 +42,16 @@ vi.mock("./ui/button", () => ({
     children: ReactNode;
   }) => <button {...props}>{children}</button>,
 }));
-vi.mock("./ui/textarea", () => ({ Textarea: (props: object) => <textarea {...props} /> }));
+vi.mock("~/composerDraftStore", () => ({
+  useComposerDraftStore: {
+    getState: () => ({
+      getComposerDraft: (ref: { threadId: string }) => ({
+        prompt: state.drafts.get(ref.threadId) ?? "",
+      }),
+      setPrompt: state.setPrompt,
+    }),
+  },
+}));
 vi.mock("./ChatView", () => ({
   default: ({
     threadId,
@@ -49,15 +59,20 @@ vi.mock("./ChatView", () => ({
   }: {
     threadId: string;
     onAskAssistantText?: (citation: AssistantCitation, runId: RunId) => void;
-  }) => (
-    <div data-chat-thread={threadId}>
-      {onAskAssistantText ? (
-        <button onClick={() => onAskAssistantText(citation, runId)}>Select passage</button>
-      ) : (
-        "Child conversation"
-      )}
-    </div>
-  ),
+  }) => {
+    useEffect(() => {
+      state.mounts.set(threadId, (state.mounts.get(threadId) ?? 0) + 1);
+    }, [threadId]);
+    return (
+      <div data-chat-thread={threadId}>
+        {onAskAssistantText ? (
+          <button onClick={() => onAskAssistantText(citation, runId)}>Select passage</button>
+        ) : (
+          "Child conversation"
+        )}
+      </div>
+    );
+  },
 }));
 
 import { ThreadSidechatsView } from "./ThreadSidechatsView";
@@ -82,7 +97,13 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.shells = [];
   state.fork.mockReset().mockResolvedValue({ _tag: "Success", value: { sequence: 1 } });
-  state.start.mockReset().mockResolvedValue({ _tag: "Success", value: { sequence: 2 } });
+  state.drafts.clear();
+  state.mounts.clear();
+  state.setPrompt
+    .mockReset()
+    .mockImplementation((ref: { threadId: string }, prompt: string) =>
+      state.drafts.set(ref.threadId, prompt),
+    );
   state.wait.mockReset().mockResolvedValue(true);
 });
 afterEach(async () => {
@@ -98,35 +119,24 @@ async function openDraft() {
   });
   await act(async () => renderer.root.findByProps({ children: "Select passage" }).props.onClick());
 }
-async function askQuestion() {
-  await act(async () =>
-    renderer.root.findByType("textarea").props.onChange({ target: { value: "Why?" } }),
-  );
-  await act(async () => {
-    const submit = renderer.root.findByType("form").props.onSubmit;
-    submit({ preventDefault() {} });
-    submit({ preventDefault() {} });
-  });
-}
-
-it("creates one fork only on first send and keeps the main conversation mounted", async () => {
+it("opens a fork in the regular chat view without sending or remounting the main chat", async () => {
   await openDraft();
-  expect(state.fork).not.toHaveBeenCalled();
-  expect(state.start).not.toHaveBeenCalled();
-  await askQuestion();
   expect(state.fork).toHaveBeenCalledTimes(1);
-  expect(state.start).toHaveBeenCalledTimes(1);
   const forkInput = state.fork.mock.calls[0]![0].input;
   expect(forkInput.runId).toBe(runId);
   expect(forkInput.sidechatSource).toEqual({ parentThreadId: parentId, citation });
-  expect(state.start.mock.calls[0]![0].input.message.text).toContain("Use a fork\n\nWhy?");
-  expect(renderer.root.findAllByProps({ "data-chat-thread": parentId })).toHaveLength(1);
+  expect(state.drafts.get(forkInput.targetThreadId)).toContain("[Assistant quote](");
   expect(
     renderer.root.findAllByProps({ "data-chat-thread": forkInput.targetThreadId }),
   ).toHaveLength(1);
+  // Selecting the same passage while its shell propagates preserves the mounted editor.
+  await act(async () => renderer.root.findByProps({ children: "Select passage" }).props.onClick());
+  expect(state.fork).toHaveBeenCalledTimes(1);
+  expect(state.mounts.get(parentId)).toBe(1);
+  expect(state.mounts.get(forkInput.targetThreadId)).toBe(1);
 });
 
-it("reopens a saved sidechat after remounting instead of creating another fork", async () => {
+it("reopens a saved sidechat without creating another fork or replacing its draft", async () => {
   state.shells = [
     {
       id: ThreadId.make("saved-child"),
@@ -136,21 +146,38 @@ it("reopens a saved sidechat after remounting instead of creating another fork",
       forkedFrom: { type: "run", threadId: parentId, runId },
     },
   ];
+  state.drafts.set("saved-child", "Unsent question");
   await openDraft();
   expect(renderer.root.findAllByProps({ "data-chat-thread": "saved-child" })).toHaveLength(1);
-  expect(renderer.root.findAllByType("textarea")).toHaveLength(0);
+  expect(state.drafts.get("saved-child")).toBe("Unsent question");
   expect(state.fork).not.toHaveBeenCalled();
+  expect(state.setPrompt).not.toHaveBeenCalled();
 });
 
-it("retries a failed first send with the same fork, message and command IDs", async () => {
-  state.start.mockResolvedValueOnce({ _tag: "Failure" }).mockResolvedValueOnce({ _tag: "Success" });
+it("retries opening with the same fork and command IDs", async () => {
+  state.fork.mockResolvedValueOnce({ _tag: "Failure" }).mockResolvedValueOnce({ _tag: "Success" });
   await openDraft();
-  await askQuestion();
   expect(renderer.root.findByProps({ role: "alert" }).children).toEqual(["Disconnected"]);
-  await act(async () => renderer.root.findByType("form").props.onSubmit({ preventDefault() {} }));
+  await act(async () =>
+    renderer.root.findByProps({ children: "Spróbuj ponownie" }).props.onClick(),
+  );
   expect(state.fork).toHaveBeenCalledTimes(2);
-  expect(state.start).toHaveBeenCalledTimes(2);
   expect(state.fork.mock.calls[1]![0]).toEqual(state.fork.mock.calls[0]![0]);
-  expect(state.start.mock.calls[1]![0]).toEqual(state.start.mock.calls[0]![0]);
-  expect(renderer.root.findAllByType("textarea")).toHaveLength(0);
+  expect(state.mounts.get(state.fork.mock.calls[0]![0].input.targetThreadId)).toBe(1);
+});
+
+it("does not reopen a panel closed while the fork was being saved", async () => {
+  let resolve!: (value: unknown) => void;
+  state.fork.mockReturnValue(
+    new Promise((done) => {
+      resolve = done;
+    }),
+  );
+  await openDraft();
+  await act(async () =>
+    renderer.root.findByProps({ "aria-label": "Zamknij sidechat" }).props.onClick(),
+  );
+  await act(async () => resolve({ _tag: "Success", value: { sequence: 1 } }));
+  expect(renderer.root.findAllByType("aside")).toHaveLength(0);
+  expect(state.mounts.get(parentId)).toBe(1);
 });

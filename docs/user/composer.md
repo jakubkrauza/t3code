@@ -98,9 +98,10 @@ navigate to their sources.
 ## Sidechats
 
 On web and desktop, select a passage in a completed assistant response and choose
-**Dopytaj** to ask about it in a side panel. Sending the first question creates a
-separate conversation forked at that response. It starts with the context T3 can
-inherit through the selected provider's existing fork mechanism. Later messages
+**Dopytaj** to open a separate conversation forked at that response in a side
+panel. It uses the regular message composer with the selected passage attached
+as a quote. The panel shows only the sidechat's own messages. It starts with the
+context T3 can inherit through the selected provider's existing fork mechanism. Later messages
 in either conversation do not automatically enter the other.
 
 Sidechats stay out of the main sidebar. Click a marked passage or a sidechat button

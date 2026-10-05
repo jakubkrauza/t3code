@@ -3,21 +3,23 @@ import { CommandId } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { XIcon } from "lucide-react";
-import { useMemo, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 
 import ChatView from "./ChatView";
 import { Button } from "./ui/button";
-import { Textarea } from "./ui/textarea";
-import { newMessageId, newThreadId } from "~/lib/utils";
+import { newThreadId } from "~/lib/utils";
 import { sameSidechatCitation } from "~/lib/sidechats";
-import { readThreadShell, useThreadShells, waitForThreadShell } from "~/state/entities";
+import { useThreadShells, waitForThreadShell } from "~/state/entities";
+import { useComposerDraftStore } from "~/composerDraftStore";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 type SidechatSelection = {
   citation: AssistantCitation;
   runId: RunId;
-  threadId: ThreadId | null;
+  threadId: ThreadId;
+  created: boolean;
 };
 
 function SidechatPanel({
@@ -32,78 +34,57 @@ function SidechatPanel({
   onCreated: (threadId: ThreadId) => void;
 }) {
   const fork = useAtomCommand(threadEnvironment.forkFromRun, { reportFailure: false });
-  const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
-  const [question, setQuestion] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [ready, setReady] = useState(selection.created);
   const [error, setError] = useState<string | null>(null);
-  // Keep the same IDs on retry, including when a response is lost after a commit.
-  const [ids] = useState(() => {
-    const threadId = newThreadId();
-    return {
-      threadId,
-      forkCommandId: CommandId.make(`sidechat:${threadId}:fork`),
-      sendCommandId: CommandId.make(`sidechat:${threadId}:send`),
-      messageId: newMessageId(),
-    };
-  });
-  const sending = useRef(false);
-  const [firstQuestion, setFirstQuestion] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  // Reuse the in-flight operation in Strict Mode and the command ID on retry.
+  const operation = useRef<{ attempt: number; promise: Promise<void> } | null>(null);
 
-  async function send() {
-    if (sending.current || !question.trim()) return;
-    const parent = readThreadShell(parentRef);
-    if (!parent) {
-      setError("Główna rozmowa jest niedostępna. Połącz się ponownie.");
-      return;
-    }
-    sending.current = true;
-    setBusy(true);
-    setError(null);
-    const submittedQuestion = firstQuestion ?? question.trim();
-    setFirstQuestion(submittedQuestion);
-    try {
+  useEffect(() => {
+    if (ready) return;
+    let active = true;
+    async function createSidechat() {
       const forked = await fork({
         environmentId: parentRef.environmentId,
         input: {
-          commandId: ids.forkCommandId,
+          commandId: CommandId.make(`sidechat:${selection.threadId}:fork`),
           sourceThreadId: parentRef.threadId,
-          targetThreadId: ids.threadId,
+          targetThreadId: selection.threadId,
           runId: selection.runId,
           title: `Sidechat: ${selection.citation.text.replace(/\s+/g, " ").slice(0, 80)}`,
           sidechatSource: { parentThreadId: parentRef.threadId, citation: selection.citation },
         },
       });
       if (forked._tag === "Failure") throw squashAtomCommandFailure(forked);
-      const ref = scopeThreadRef(parentRef.environmentId, ids.threadId);
+      const ref = scopeThreadRef(parentRef.environmentId, selection.threadId);
       if (!(await waitForThreadShell(ref))) {
         throw new Error("Sidechat został zapisany, ale czekamy na połączenie. Spróbuj ponownie.");
       }
-      const started = await startTurn({
-        environmentId: parentRef.environmentId,
-        input: {
-          commandId: ids.sendCommandId,
-          threadId: ids.threadId,
-          runtimeMode: parent.runtimeMode,
-          interactionMode: parent.interactionMode,
-          message: {
-            messageId: ids.messageId,
-            role: "user",
-            text: `Pytanie o fragment wcześniejszej odpowiedzi:\n\n${selection.citation.text}\n\n${submittedQuestion}`,
-            attachments: [],
-          },
-        },
-      });
-      if (started._tag === "Failure") throw squashAtomCommandFailure(started);
-      onCreated(ids.threadId);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Nie udało się wysłać pytania.");
-    } finally {
-      sending.current = false;
-      setBusy(false);
+      const drafts = useComposerDraftStore.getState();
+      if (!drafts.getComposerDraft(ref)?.prompt) {
+        drafts.setPrompt(ref, `${serializeAssistantCitation(selection.citation)}\n\n`);
+      }
     }
-  }
+    if (operation.current?.attempt !== attempt) {
+      operation.current = { attempt, promise: createSidechat() };
+    }
+    void operation.current.promise.then(
+      () => {
+        if (!active) return;
+        setReady(true);
+        onCreated(selection.threadId);
+      },
+      (cause: unknown) => {
+        if (active)
+          setError(cause instanceof Error ? cause.message : "Nie udało się otworzyć sidechatu.");
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [attempt, fork, onCreated, parentRef, ready, selection]);
 
-  if (selection.threadId !== null) {
+  if (ready) {
     return (
       <ChatView
         environmentId={parentRef.environmentId}
@@ -117,43 +98,27 @@ function SidechatPanel({
   }
 
   return (
-    <form
-      className="flex min-h-0 flex-1 flex-col gap-3 p-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void send();
-      }}
-    >
-      <p className="text-sm text-muted-foreground">
-        Osobna rozmowa z kontekstem do zaznaczonej odpowiedzi.
-      </p>
-      <div className="mt-auto">
-        <Textarea
-          aria-label="Pytanie w sidechacie"
-          placeholder="O co chcesz dopytać?"
-          value={question}
-          disabled={busy || firstQuestion !== null}
-          autoFocus
-          onChange={(event) => setQuestion(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              void send();
-            }
-          }}
-        />
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-4">
       {error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
+        <>
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+          <Button
+            onClick={() => {
+              setError(null);
+              setAttempt((value) => value + 1);
+            }}
+          >
+            Spróbuj ponownie
+          </Button>
+        </>
+      ) : (
+        <p role="status" className="text-sm text-muted-foreground">
+          Otwieranie sidechatu…
         </p>
-      ) : null}
-      <div className="flex justify-end">
-        <Button type="submit" disabled={busy || !question.trim()}>
-          {busy ? "Otwieranie…" : error ? "Spróbuj ponownie" : "Wyślij"}
-        </Button>
-      </div>
-    </form>
+      )}
+    </div>
   );
 }
 
@@ -197,6 +162,7 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
         citation: thread.sidechatSource.citation,
         runId: thread.forkedFrom.runId,
         threadId,
+        created: true,
       },
     });
     setActivePane("side");
@@ -210,7 +176,14 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
       openSidechat(existing.threadId);
       return;
     }
-    setPanel({ parentKey, selection: { citation, runId, threadId: null } });
+    if (selection && sameSidechatCitation(selection.citation, citation)) {
+      setActivePane("side");
+      return;
+    }
+    setPanel({
+      parentKey,
+      selection: { citation, runId, threadId: newThreadId(), created: false },
+    });
     setActivePane("side");
   }
 
@@ -236,8 +209,7 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
           onPointerDownCapture={() => setActivePane("side")}
           onFocusCapture={() => setActivePane("side")}
         >
-          <header className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2 [-webkit-app-region:no-drag]">
-            <span className="text-sm font-medium">Sidechat</span>
+          <header className="flex h-[var(--workspace-topbar-height)] shrink-0 items-center gap-2 border-b pr-3 pl-12 md:pl-3 [-webkit-app-region:no-drag]">
             <Button
               size="icon-xs"
               variant="ghost"
@@ -249,19 +221,20 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
             >
               <XIcon className="size-4" />
             </Button>
+            <span className="text-sm font-medium">Sidechat</span>
           </header>
           <blockquote className="max-h-32 shrink-0 overflow-auto border-b bg-muted/30 px-4 py-3 text-sm whitespace-pre-wrap">
             {selection.citation.text}
           </blockquote>
           <SidechatPanel
-            key={`${parentKey}:${selection.threadId ?? `${selection.citation.messageId}:${selection.citation.start}:${selection.citation.end}`}`}
+            key={`${parentKey}:${selection.threadId}`}
             parentRef={parentRef}
             selection={selection}
             keyboardActive={activePane === "side"}
             onCreated={(threadId) =>
               setPanel((current) =>
                 current?.parentKey === parentKey && current.selection === selection
-                  ? { parentKey, selection: { ...selection, threadId } }
+                  ? { parentKey, selection: { ...selection, threadId, created: true } }
                   : current,
               )
             }
