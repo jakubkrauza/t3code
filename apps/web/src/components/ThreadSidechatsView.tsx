@@ -30,6 +30,7 @@ import { Spinner } from "./ui/spinner";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import { cn } from "~/lib/utils";
 import { isElectron } from "~/env";
+import { runSidechatTransition } from "./chat/sidechatTransition";
 
 const MainChatView = memo(ChatView);
 
@@ -172,24 +173,25 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
         thread.forkedFrom?.type !== "run"
       )
         return;
-      setPanel({
-        parentKey,
-        open: true,
-        selection: {
-          citation: thread.sidechatSource.citation,
-          runId: thread.forkedFrom.runId,
-          threadId,
-          created: true,
-        },
+      const selection: SidechatSelection = {
+        citation: thread.sidechatSource.citation,
+        runId: thread.forkedFrom.runId,
+        threadId,
+        created: true,
+      };
+      runSidechatTransition(() => {
+        setPanel({ parentKey, open: true, selection });
+        setActivePane("side");
       });
-      setActivePane("side");
     },
     [parentKey, parentRef],
   );
 
   const closeSidechat = useCallback(() => {
-    setPanel((current) => (current ? { ...current, open: false } : current));
-    setActivePane("main");
+    runSidechatTransition(() => {
+      setPanel((current) => (current ? { ...current, open: false } : current));
+      setActivePane("main");
+    });
   }, []);
   const markCreated = useCallback((threadId: ThreadId) => {
     setPanel((current) =>
@@ -209,13 +211,15 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
         return;
       }
       const threadId = newThreadId();
-      setPanel((current) =>
-        current?.parentKey === parentKey &&
-        sameSidechatCitation(current.selection.citation, citation)
-          ? { ...current, open: true }
-          : { parentKey, open: true, selection: { citation, runId, threadId, created: false } },
-      );
-      setActivePane("side");
+      runSidechatTransition(() => {
+        setPanel((current) =>
+          current?.parentKey === parentKey &&
+          sameSidechatCitation(current.selection.citation, citation)
+            ? { ...current, open: true }
+            : { parentKey, open: true, selection: { citation, runId, threadId, created: false } },
+        );
+        setActivePane("side");
+      });
     },
     [sidechats, openSidechat, parentKey],
   );
@@ -224,6 +228,7 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
     <div className="relative flex min-h-0 min-w-0 flex-1">
       <div
         className="flex min-h-0 min-w-0 flex-1 flex-col"
+        data-sidechat-main
         onPointerDownCapture={(event) => {
           if (!(event.target as Element).closest("[data-sidechat-hovered]")) setActivePane("main");
         }}
@@ -243,6 +248,7 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
           aria-label="Sidechat"
           aria-hidden={!panelOpen}
           inert={!panelOpen}
+          data-sidechat-panel
           className={cn(
             "absolute inset-0 z-30 min-h-0 min-w-0 md:static md:shrink-0",
             !panelOpen && "pointer-events-none invisible",
@@ -250,7 +256,7 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
           onPointerDownCapture={() => setActivePane("side")}
           onFocusCapture={() => setActivePane("side")}
         >
-          <PreviewPanelShell mode="inline" open={panelOpen} inlineSize={inlineSize}>
+          <PreviewPanelShell mode="inline" open={panelOpen} inlineSize={inlineSize} animate={false}>
             <header
               className={cn(
                 "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pr-28 pl-2",

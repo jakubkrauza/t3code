@@ -86,6 +86,69 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* Sidechats resize once behind a snapshot, then reveal the settled layout. */
+html[data-sidechat-transition="true"] [data-sidechat-main] {
+  view-transition-name: t3-sidechat-main;
+}
+
+html[data-sidechat-transition="true"] [data-sidechat-panel] {
+  view-transition-name: t3-sidechat-panel;
+}
+
+html[data-sidechat-transition="true"]::view-transition-old(root),
+html[data-sidechat-transition="true"]::view-transition-new(root),
+html[data-sidechat-transition="true"]::view-transition-group(root),
+html[data-sidechat-transition="true"]::view-transition-group(t3-sidechat-main),
+html[data-sidechat-transition="true"]::view-transition-group(t3-sidechat-panel) {
+  animation: none;
+}
+
+html[data-sidechat-transition="true"]::view-transition-old(t3-sidechat-main),
+html[data-sidechat-transition="true"]::view-transition-old(t3-sidechat-panel) {
+  animation: t3-sidechat-out 140ms ease-out both;
+  mix-blend-mode: normal;
+}
+
+html[data-sidechat-transition="true"]::view-transition-new(t3-sidechat-main) {
+  animation: t3-sidechat-in 140ms ease-out both;
+  mix-blend-mode: normal;
+}
+
+html[data-sidechat-transition="true"]::view-transition-old(t3-sidechat-main),
+html[data-sidechat-transition="true"]::view-transition-new(t3-sidechat-main) {
+  object-fit: none;
+  object-position: top left;
+}
+
+html[data-sidechat-transition="true"]::view-transition-new(t3-sidechat-panel) {
+  animation: t3-sidechat-panel-in 140ms ease-out both;
+  mix-blend-mode: normal;
+}
+
+html[data-sidechat-transition="true"][data-sidechat-resizing="false"]::view-transition-old(t3-sidechat-main),
+html[data-sidechat-transition="true"][data-sidechat-resizing="false"]::view-transition-new(t3-sidechat-main) {
+  animation: none;
+}
+
+@keyframes t3-sidechat-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes t3-sidechat-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes t3-sidechat-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+}
+
 :root {
   --app-scrollbar-width: 6px;
   --appearance-contrast-base: 100%;
