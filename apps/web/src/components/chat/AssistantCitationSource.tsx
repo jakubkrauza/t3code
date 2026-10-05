@@ -5,6 +5,7 @@ import {
   resolveAssistantCitationRange,
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
+import { observeSidechatAnchors, type SidechatAnchor } from "~/lib/sidechats";
 import { toastManager } from "../ui/toast";
 
 const CITATION_PULSE_DURATION_MS = 650;
@@ -344,6 +345,8 @@ export function observeAssistantCitationSource({
 
 export function AssistantCitationSource({
   messageId,
+  sidechats,
+  onOpenSidechat,
   threadRef,
   itemKey,
   request,
@@ -351,6 +354,8 @@ export function AssistantCitationSource({
   children,
 }: {
   messageId: MessageId;
+  sidechats?: ReadonlyArray<SidechatAnchor>;
+  onOpenSidechat?: ((threadId: SidechatAnchor["threadId"]) => void) | undefined;
   threadRef?: ScopedThreadRef;
   itemKey: string;
   request: AssistantCitationTarget | null;
@@ -364,6 +369,19 @@ export function AssistantCitationSource({
     if (!root || !list || !request || request.citation.messageId !== messageId) return;
     return observeAssistantCitationSource({ root, itemKey, request, list });
   }, [itemKey, listRef, messageId, request]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !sidechats || !onOpenSidechat || !threadRef) return;
+    const anchors = sidechats.filter(
+      ({ citation }) =>
+        citation.messageId === messageId &&
+        citation.threadId === threadRef.threadId &&
+        citation.environmentId === threadRef.environmentId,
+    );
+    if (anchors.length === 0) return;
+    return observeSidechatAnchors(root, anchors, onOpenSidechat);
+  }, [messageId, sidechats, onOpenSidechat, threadRef]);
 
   return (
     <div

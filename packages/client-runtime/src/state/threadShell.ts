@@ -204,7 +204,11 @@ export function createEnvironmentThreadShellAtoms(input: {
     const next: EnvironmentThreadShell[] = [];
     for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
       for (const thread of get(environmentThreadsAtom(environmentId))) {
-        if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent")
+        if (
+          thread.archivedAt !== null ||
+          thread.sidechatSource !== undefined ||
+          thread.lineage.relationshipToParent === "subagent"
+        )
           continue;
         next.push(scopedThread(environmentId, thread));
       }

@@ -215,6 +215,7 @@ export interface ForkThreadFromRunInput extends CommandMetadata {
   readonly targetThreadId: ThreadId;
   readonly runId: RunId;
   readonly title?: string;
+  readonly sidechatSource?: import("@t3tools/contracts").OrchestrationV2AppThread["sidechatSource"];
 }
 
 export interface MergeThreadBackInput extends CommandMetadata {
@@ -923,6 +924,7 @@ export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRu
     sourceThreadId: input.sourceThreadId,
     targetThreadId: input.targetThreadId,
     sourcePoint: { type: "run", runId: input.runId },
+    ...(input.sidechatSource === undefined ? {} : { sidechatSource: input.sidechatSource }),
     ...(input.title === undefined ? {} : { title: input.title }),
   });
 });

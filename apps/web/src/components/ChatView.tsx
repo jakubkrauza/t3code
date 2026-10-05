@@ -39,7 +39,7 @@ import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
-import { Minimize2Icon } from "lucide-react";
+import { MessageSquareIcon, Minimize2Icon } from "lucide-react";
 import {
   questionAttachmentDraftId,
   questionAttachmentDraftPrefix,
@@ -405,6 +405,7 @@ import { useProjectClone } from "../state/projectClones";
 import { projectCloneDisplayName, projectCloneProgressSummary } from "@t3tools/contracts";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
+  readThreadShell,
   resolveThreadDetailRef,
   useProject,
   useProjects,
@@ -798,7 +799,13 @@ function isCompactCommandMessage(message: ChatMessage): boolean {
   return message.role === "user" && text === "/compact" && !message.attachments?.length;
 }
 
-type ChatViewProps =
+type ChatViewProps = {
+  embedded?: boolean;
+  keyboardActive?: boolean;
+  onAskAssistantText?: (citation: AssistantCitation, runId: RunId) => void;
+  sidechats?: ReadonlyArray<{ threadId: ThreadId; citation: AssistantCitation }>;
+  onOpenSidechat?: (threadId: ThreadId) => void;
+} & (
   | {
       environmentId: EnvironmentId;
       threadId: ThreadId;
@@ -816,7 +823,8 @@ type ChatViewProps =
       forceExpandedMobileComposer?: boolean;
       routeKind: "draft";
       draftId: DraftId;
-    };
+    }
+);
 
 interface TerminalLaunchContext {
   threadId: ThreadId;
@@ -1520,11 +1528,18 @@ export default function ChatView(props: ChatViewProps) {
   const {
     environmentId,
     threadId,
+    embedded = false,
+    keyboardActive = true,
+    onAskAssistantText,
+    sidechats,
+    onOpenSidechat,
     routeKind,
     onDiffPanelOpen,
     reserveTitleBarControlInset = true,
     forceExpandedMobileComposer = false,
   } = props;
+  const keyboardActiveRef = useRef(keyboardActive);
+  keyboardActiveRef.current = keyboardActive;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
@@ -1776,7 +1791,8 @@ export default function ChatView(props: ChatViewProps) {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
-  const composerRef = useComposerHandleContext() ?? localComposerRef;
+  const sharedComposerRef = useComposerHandleContext();
+  const composerRef = embedded ? localComposerRef : (sharedComposerRef ?? localComposerRef);
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
   const [restingComposerControlsHost, setRestingComposerControlsHost] =
@@ -1796,6 +1812,24 @@ export default function ChatView(props: ChatViewProps) {
       return inserted;
     },
     [composerRef],
+  );
+  const askAssistantText = useCallback(
+    (citation: AssistantCitation) => {
+      const message = serverProjection?.messages.find((item) => item.id === citation.messageId);
+      const sourceRun = serverProjection?.runs.find((run) => run.id === message?.runId);
+      if (
+        !message ||
+        message.streaming ||
+        !sourceRun ||
+        !["completed", "waiting"].includes(sourceRun.status)
+      ) {
+        toastManager.add({ type: "warning", title: "Poczekaj na zakończenie odpowiedzi" });
+        return false;
+      }
+      onAskAssistantText?.(citation, sourceRun.id);
+      return true;
+    },
+    [onAskAssistantText, serverProjection],
   );
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
@@ -4470,7 +4504,7 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const focusComposer = useCallback(() => {
-    composerRef.current?.focusAtEnd();
+    if (keyboardActiveRef.current) composerRef.current?.focusAtEnd();
   }, [composerRef]);
   const canInterruptRunningThread = deriveCanInterruptRunningThread(
     activeThread !== undefined,
@@ -6321,6 +6355,7 @@ export default function ChatView(props: ChatViewProps) {
         // the end on the next stream chunk. Clicking message text can leave
         // DOM focus on body, so these keys must also be heard at document.
         const handleKeyDown = (event: KeyboardEvent) => {
+          if (!keyboardActiveRef.current) return;
           if (
             !(event.target instanceof Node) ||
             (!scrollNode.contains(event.target) &&
@@ -7583,6 +7618,7 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
+      if (!keyboardActiveRef.current) return;
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
         event.stopPropagation();
         return;
@@ -7896,6 +7932,7 @@ export default function ChatView(props: ChatViewProps) {
   // Route it to the composer like a typed key, which also expands it.
   useEffect(() => {
     const keyHandler = (event: KeyboardEvent) => {
+      if (!keyboardActiveRef.current) return;
       if (
         shouldRedirectInputToComposer(event) &&
         isPasteAsTextShortcut(event, isMacPlatform(navigator.platform))
@@ -7904,6 +7941,7 @@ export default function ChatView(props: ChatViewProps) {
       }
     };
     const handler = (event: ClipboardEvent) => {
+      if (!keyboardActiveRef.current) return;
       if (!activeThreadId || isCommandPaletteOpen()) return;
       if (getTerminalFocusOwner() !== null) return;
       if (composerRef.current?.isModelPickerOpen()) return;
@@ -10810,6 +10848,7 @@ export default function ChatView(props: ChatViewProps) {
   return (
     <div
       ref={workspaceLayoutRef}
+      data-chat-embedded={embedded || undefined}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
       <Dialog
@@ -10835,7 +10874,7 @@ export default function ChatView(props: ChatViewProps) {
           ) : null}
         </WizardPopup>
       </Dialog>
-      {rightPanelControlsAtRoot ? panelLayoutControls : null}
+      {!embedded && rightPanelControlsAtRoot ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -10845,9 +10884,11 @@ export default function ChatView(props: ChatViewProps) {
       >
         {/* Top bar */}
         <header
+          hidden={embedded}
           ref={threadPanelPopoverAnchorRef}
           data-chat-header
           className={cn(
+            embedded && "!hidden",
             "relative bg-background [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
             isElectron
               ? cn(
@@ -10881,6 +10922,26 @@ export default function ChatView(props: ChatViewProps) {
               : {})}
           />
         </header>
+
+        {sidechats && sidechats.length > 0 ? (
+          <nav
+            aria-label="Sidechaty tej rozmowy"
+            className="flex shrink-0 flex-wrap gap-1 border-b px-3 py-1"
+          >
+            {sidechats.map((sidechat, index) => (
+              <Button
+                key={sidechat.threadId}
+                size="xs"
+                variant="ghost"
+                title={sidechat.citation.text}
+                onClick={() => onOpenSidechat?.(sidechat.threadId)}
+              >
+                <MessageSquareIcon className="size-3" />
+                Sidechat {index + 1}
+              </Button>
+            ))}
+          </nav>
+        ) : null}
 
         {/* Main content area with optional plan sidebar */}
         <div className="relative flex min-h-0 min-w-0 flex-1">
@@ -10932,6 +10993,11 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
+                sidechats={sidechats}
+                onOpenSidechat={onOpenSidechat}
+                onAskAssistantText={
+                  onAskAssistantText && !paintOnlyDisplayedTimeline ? askAssistantText : undefined
+                }
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline
@@ -11129,6 +11195,7 @@ export default function ChatView(props: ChatViewProps) {
                           ) : null}
                           {!composerMounted ? null : (
                             <ChatComposer
+                              keyboardActive={keyboardActive}
                               reportedModelSelection={reportedModelSelection}
                               multipleModelSelections={multipleModelSelections}
                               supportsMultipleModels={
@@ -11441,24 +11508,29 @@ export default function ChatView(props: ChatViewProps) {
         </div>
         {/* end horizontal flex container */}
 
-        {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
-          <PersistentThreadTerminalDrawer
-            key={mountedThreadKey}
-            threadRef={mountedThreadRef}
-            threadId={mountedThreadRef.threadId}
-            active={mountedThreadKey === activeThreadKey}
-            launchContext={
-              mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
-            }
-            focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            keybindings={keybindings}
-            onAddTerminalContext={addTerminalContextToDraft}
-          />
-        ))}
+        {mountedTerminalThreadRefs
+          .filter(
+            ({ key, threadRef }) =>
+              key === activeThreadKey || (!embedded && !readThreadShell(threadRef)?.sidechatSource),
+          )
+          .map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
+            <PersistentThreadTerminalDrawer
+              key={mountedThreadKey}
+              threadRef={mountedThreadRef}
+              threadId={mountedThreadRef.threadId}
+              active={mountedThreadKey === activeThreadKey}
+              launchContext={
+                mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
+              }
+              focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
+              splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+              splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
+              newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+              closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+              keybindings={keybindings}
+              onAddTerminalContext={addTerminalContextToDraft}
+            />
+          ))}
       </div>
 
       {rightPanelPresent && !shouldUsePlanSidebarSheet && activeThreadRef ? (

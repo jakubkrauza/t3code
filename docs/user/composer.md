@@ -95,6 +95,18 @@ The quoted text and comment count toward the message limit.
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.
 
+## Sidechats
+
+On web and desktop, select a passage in a completed assistant response and choose
+**Dopytaj** to ask about it in a side panel. Sending the first question creates a
+separate conversation forked at that response. It starts with the context T3 can
+inherit through the selected provider's existing fork mechanism. Later messages
+in either conversation do not automatically enter the other.
+
+Sidechats stay out of the main sidebar. Click a marked passage or a sidechat button
+in the parent conversation to reopen its history. Closing the panel keeps the
+conversation saved. Both conversations still use the same project files.
+
 ## Recall a sent prompt
 
 Press `ArrowUp` in an empty composer to bring back the last prompt you sent in this thread. Press

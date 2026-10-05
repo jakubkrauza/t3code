@@ -3364,14 +3364,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
     const sourceProjection = yield* projectionStore
-      .getThreadRecords(command.sourceThreadId, [
-        "runs",
-        "checkpoints",
-        "providerThreads",
-        "providerTurns",
-        "attempts",
-        "contextTransfers",
-      ])
+      .getThreadRecords(
+        command.sourceThreadId,
+        [
+          "runs",
+          ...(command.sidechatSource === undefined ? [] : ["messages" as const]),
+          "checkpoints",
+          "providerThreads",
+          "providerTurns",
+          "attempts",
+          "contextTransfers",
+        ],
+        command.sidechatSource === undefined
+          ? undefined
+          : { messageIds: [command.sidechatSource.citation.messageId] },
+      )
       .pipe(
         Effect.mapError(
           (cause) =>
@@ -3398,6 +3405,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: forkableSourceRunStatusError(sourceRun),
       });
     }
+    const sidechatSource = command.sidechatSource;
+    if (sidechatSource !== undefined) {
+      const message = sourceProjection.messages.find(
+        (candidate) => candidate.id === sidechatSource.citation.messageId,
+      );
+      if (message?.role !== "assistant" || message.runId !== sourceRun.id || message.streaming) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The sidechat must cite a completed assistant message from the fork source run.",
+        });
+      }
+    }
     const sourceProviderThread = providerThreadForRun(sourceProjection, sourceRun);
     const now = command.createdAt ?? (yield* DateTime.now);
     const emitEvent = emit(events, command);
@@ -3417,6 +3437,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         transferId,
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
+        ...(command.sidechatSource === undefined ? {} : { sidechatSource: command.sidechatSource }),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         createdAt: now,

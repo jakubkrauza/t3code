@@ -62,6 +62,7 @@ export interface ThreadForkServiceV2Shape {
     readonly transferId: ContextTransferId;
     readonly targetThreadId: ThreadId;
     readonly title?: string;
+    readonly sidechatSource?: OrchestrationV2AppThread["sidechatSource"];
     readonly createdBy: OrchestrationV2Actor;
     readonly creationSource: OrchestrationV2CreationSource;
     readonly createdAt: DateTime.Utc;
@@ -85,6 +86,17 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
             cause: forkableSourceRunStatusError(input.sourceRun),
           });
         }
+        if (
+          input.sidechatSource !== undefined &&
+          (input.sidechatSource.parentThreadId !== input.sourceProjection.thread.id ||
+            input.sidechatSource.citation.threadId !== input.sourceProjection.thread.id)
+        ) {
+          return yield* new ThreadForkPlanError({
+            sourceThreadId: input.sourceProjection.thread.id,
+            targetThreadId: input.targetThreadId,
+            cause: "The sidechat citation must belong to its parent thread.",
+          });
+        }
         const targetThread: OrchestrationV2AppThread = {
           ...input.sourceProjection.thread,
           createdBy: input.createdBy,
@@ -92,6 +104,8 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           id: input.targetThreadId,
           title: input.title ?? `${input.sourceProjection.thread.title} fork`,
           activeProviderThreadId: null,
+          // Ordinary forks of a sidechat are ordinary threads again.
+          sidechatSource: input.sidechatSource,
           lineage: {
             parentThreadId: input.sourceProjection.thread.id,
             relationshipToParent: "fork",

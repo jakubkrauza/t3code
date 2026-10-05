@@ -624,6 +624,27 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       transparent
     );
   }
+  ::highlight(t3-sidechat-0) {
+    background-color: oklch(0.75 0.15 300 / 0.25);
+    text-decoration: underline;
+    text-decoration-color: oklch(0.65 0.2 300);
+  }
+  ::highlight(t3-sidechat-1) {
+    background-color: oklch(0.75 0.15 220 / 0.25);
+    text-decoration: underline;
+    text-decoration-color: oklch(0.65 0.2 220);
+  }
+  ::highlight(t3-sidechat-2) {
+    background-color: oklch(0.75 0.15 145 / 0.25);
+    text-decoration: underline;
+    text-decoration-color: oklch(0.65 0.2 145);
+  }
+  ::highlight(t3-sidechat-3) {
+    background-color: oklch(0.75 0.15 70 / 0.25);
+    text-decoration: underline;
+    text-decoration-color: oklch(0.65 0.2 70);
+  }
+
   ::highlight(t3-assistant-citation-comment) {
     background-color: color-mix(in oklab, var(--primary) 45%, transparent);
   }

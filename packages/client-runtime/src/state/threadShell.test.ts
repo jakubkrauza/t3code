@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  MessageId,
   ProjectId,
   ThreadId,
   type OrchestrationV2ShellSnapshot,
@@ -198,4 +199,37 @@ describe("v2 thread shell lists", () => {
       harness.registry.dispose();
     }
   });
+});
+
+it("keeps sidechats available by ID while excluding them from ordinary thread navigation", () => {
+  const { registry, threads, snapshotAtom } = makeHarness();
+  const root = v2ThreadShell;
+  const child = {
+    ...root,
+    id: ThreadId.make("sidechat-child"),
+    sidechatSource: {
+      parentThreadId: root.id,
+      citation: {
+        version: 1 as const,
+        environmentId,
+        threadId: root.id,
+        messageId: MessageId.make("source-message"),
+        text: "quote",
+        start: 0,
+        end: 5,
+        prefix: "",
+        suffix: "",
+      },
+    },
+  };
+  registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, child] });
+  const dispose = registry.mount(threads.navigationThreadShellsAtom);
+  expect(registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id)).toEqual([
+    root.id,
+  ]);
+  expect(
+    registry.get(threads.threadShellAtom({ environmentId, threadId: child.id }))?.sidechatSource,
+  ).toEqual(child.sidechatSource);
+  dispose();
+  registry.dispose();
 });

@@ -1,0 +1,204 @@
+import { assert, it } from "@effect/vitest";
+import {
+  CommandId,
+  EnvironmentId,
+  EventId,
+  MessageId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  TurnItemId,
+  type AssistantCitation,
+  type OrchestrationV2Command,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as EventSink from "./EventSink.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+
+const sourceThreadId = ThreadId.make("sidechat-parent");
+const targetThreadId = ThreadId.make("sidechat-child");
+const sourceRunId = RunId.make("sidechat-source-run");
+const messageId = MessageId.make("sidechat-source-message");
+const instanceId = ProviderInstanceId.make("codex");
+const modelSelection = { instanceId, model: "test-model" };
+const citation: AssistantCitation = {
+  version: 1,
+  environmentId: EnvironmentId.make("local"),
+  threadId: sourceThreadId,
+  messageId,
+  text: "Use a fork",
+  start: 0,
+  end: 10,
+  prefix: "",
+  suffix: ".",
+};
+const layer = makeOrchestratorV2ReplayLayerWithRegistry(
+  { name: "anchored-sidechat" },
+  ProviderAdapterRegistry.makeLayer([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+      planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+      openSession: () => Effect.die("This test does not start provider execution"),
+    },
+  ]),
+  { runEffectWorker: false },
+);
+
+const seed = Effect.gen(function* () {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const sink = yield* EventSink.EventSinkV2;
+  const now = yield* DateTime.now;
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make("sidechat-create-parent"),
+    threadId: sourceThreadId,
+    projectId: ProjectId.make("sidechat-project"),
+    title: "Parent",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+  });
+  yield* sink.write({
+    events: [
+      {
+        id: EventId.make("sidechat-source-run-event"),
+        type: "run.created",
+        threadId: sourceThreadId,
+        runId: sourceRunId,
+        occurredAt: now,
+        payload: {
+          id: sourceRunId,
+          threadId: sourceThreadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("source-user"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          queuePosition: null,
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      },
+      {
+        id: EventId.make("sidechat-source-message-event"),
+        type: "turn-item.updated",
+        threadId: sourceThreadId,
+        runId: sourceRunId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("sidechat-source-item"),
+          threadId: sourceThreadId,
+          runId: sourceRunId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "assistant_message",
+          messageId,
+          text: "Use a fork.",
+          streaming: false,
+        },
+      },
+      {
+        id: EventId.make("sidechat-conversation-message-event"),
+        type: "message.updated",
+        threadId: sourceThreadId,
+        runId: sourceRunId,
+        occurredAt: now,
+        payload: {
+          id: messageId,
+          threadId: sourceThreadId,
+          runId: sourceRunId,
+          nodeId: null,
+          createdBy: "agent",
+          creationSource: "provider",
+          role: "assistant",
+          text: "Use a fork.",
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    ],
+  });
+  return orchestrator;
+});
+
+function forkCommand(quote = citation): Extract<OrchestrationV2Command, { type: "thread.fork" }> {
+  return {
+    type: "thread.fork",
+    commandId: CommandId.make("sidechat-fork"),
+    sourceThreadId,
+    targetThreadId,
+    sourcePoint: { type: "run", runId: sourceRunId },
+    sidechatSource: { parentThreadId: sourceThreadId, citation: quote },
+    createdBy: "user",
+    creationSource: "web",
+  };
+}
+
+it.effect("persists a sidechat anchor in both thread detail and shell, and retries one fork", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* seed;
+    const result = yield* orchestrator.dispatch(forkCommand());
+    const retry = yield* orchestrator.dispatch(forkCommand());
+    assert.equal(retry.sequence, result.sequence);
+    const detail = yield* orchestrator.getThreadProjection(targetThreadId);
+    const shell = yield* orchestrator.getThreadShell(targetThreadId);
+    assert.deepEqual(detail.thread.sidechatSource, { parentThreadId: sourceThreadId, citation });
+    assert.deepEqual(shell?.sidechatSource, detail.thread.sidechatSource);
+    const snapshot = yield* orchestrator.getShellSnapshot();
+    assert.deepEqual(
+      snapshot.threads.find((thread) => thread.id === targetThreadId)?.sidechatSource,
+      detail.thread.sidechatSource,
+    );
+    assert.equal(detail.contextTransfers.length, 1);
+    assert.deepEqual(detail.thread.forkedFrom, {
+      type: "run",
+      threadId: sourceThreadId,
+      runId: sourceRunId,
+    });
+    const parent = yield* orchestrator.getThreadProjection(sourceThreadId);
+    assert.isUndefined(parent.thread.sidechatSource);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "rejects a citation from a different message instead of attaching it to the wrong fork",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* seed;
+      const error = yield* orchestrator
+        .dispatch(forkCommand({ ...citation, messageId: MessageId.make("unrelated") }))
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "OrchestratorDispatchError");
+      assert.isNull(yield* orchestrator.getThreadShell(targetThreadId));
+    }).pipe(Effect.provide(layer)),
+);
