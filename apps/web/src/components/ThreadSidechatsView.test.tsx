@@ -24,9 +24,34 @@ vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => state.fork,
 }));
 vi.mock("~/state/entities", () => ({
-  useThreadShells: () => state.shells,
+  readThreadShell: (ref: { threadId: string }) =>
+    state.shells.find((value) => (value as { id: string }).id === ref.threadId),
   waitForThreadShell: state.wait,
 }));
+vi.mock("~/state/sidechats", () => ({
+  useThreadSidechats: () =>
+    state.shells.map((value) => {
+      const thread = value as { id: string; sidechatSource: { citation: AssistantCitation } };
+      return { threadId: thread.id, citation: thread.sidechatSource.citation };
+    }),
+}));
+vi.mock("~/hooks/usePreviewPanelInlineSize", () => ({
+  usePreviewPanelInlineSize: () => ({ width: 540, handlers: {} }),
+}));
+vi.mock("./preview/PreviewPanelShell", () => ({
+  PreviewPanelShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("./ui/panel-tab-close-button", () => ({
+  PanelTabCloseButton: ({ label, onClick }: { label: string; onClick: () => void }) => (
+    <button aria-label={label} onClick={onClick} />
+  ),
+}));
+vi.mock("./ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+  TooltipPopup: () => null,
+}));
+vi.mock("./ui/spinner", () => ({ Spinner: () => <span /> }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: () => new Error("Disconnected"),
 }));
@@ -158,9 +183,7 @@ it("retries opening with the same fork and command IDs", async () => {
   state.fork.mockResolvedValueOnce({ _tag: "Failure" }).mockResolvedValueOnce({ _tag: "Success" });
   await openDraft();
   expect(renderer.root.findByProps({ role: "alert" }).children).toEqual(["Disconnected"]);
-  await act(async () =>
-    renderer.root.findByProps({ children: "Spróbuj ponownie" }).props.onClick(),
-  );
+  await act(async () => renderer.root.findByProps({ children: "Try again" }).props.onClick());
   expect(state.fork).toHaveBeenCalledTimes(2);
   expect(state.fork.mock.calls[1]![0]).toEqual(state.fork.mock.calls[0]![0]);
   expect(state.mounts.get(state.fork.mock.calls[0]![0].input.targetThreadId)).toBe(1);
@@ -175,9 +198,32 @@ it("does not reopen a panel closed while the fork was being saved", async () => 
   );
   await openDraft();
   await act(async () =>
-    renderer.root.findByProps({ "aria-label": "Zamknij sidechat" }).props.onClick(),
+    renderer.root.findByProps({ "aria-label": "Close sidechat" }).props.onClick(),
   );
   await act(async () => resolve({ _tag: "Success", value: { sequence: 1 } }));
-  expect(renderer.root.findAllByType("aside")).toHaveLength(0);
+  expect(renderer.root.findByType("aside").props["aria-hidden"]).toBe(true);
+  expect(state.mounts.get(parentId)).toBe(1);
+});
+
+it("keeps the sidechat editor mounted through closing and reopening the panel", async () => {
+  state.shells = [
+    {
+      id: ThreadId.make("saved-child"),
+      environmentId,
+      deletedAt: null,
+      sidechatSource: { parentThreadId: parentId, citation },
+      forkedFrom: { type: "run", threadId: parentId, runId },
+    },
+  ];
+  await openDraft();
+  const child = renderer.root.findByProps({ "data-chat-thread": "saved-child" });
+  await act(async () =>
+    renderer.root.findByProps({ "aria-label": "Close sidechat" }).props.onClick(),
+  );
+  expect(renderer.root.findByType("aside").props["aria-hidden"]).toBe(true);
+  await act(async () => renderer.root.findByProps({ children: "Select passage" }).props.onClick());
+  expect(renderer.root.findByType("aside").props["aria-hidden"]).toBe(false);
+  expect(renderer.root.findByProps({ "data-chat-thread": "saved-child" })).toBe(child);
+  expect(state.mounts.get("saved-child")).toBe(1);
   expect(state.mounts.get(parentId)).toBe(1);
 });

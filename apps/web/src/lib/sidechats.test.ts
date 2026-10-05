@@ -22,6 +22,9 @@ function source() {
   const handlers = new Map<string, EventListener>();
   const selection = { text: "" };
   const root = {
+    style: { cursor: "text" },
+    toggleAttribute: vi.fn(),
+    removeAttribute: vi.fn(),
     ownerDocument: { getSelection: () => ({ toString: () => selection.text }) },
     addEventListener: (name: string, callback: EventListener) => handlers.set(name, callback),
     removeEventListener: (name: string) => handlers.delete(name),
@@ -128,4 +131,33 @@ it("distinguishes repeated quotes and identical IDs in different environments", 
   expect(
     sameSidechatCitation(citation, { ...citation, environmentId: EnvironmentId.make("remote") }),
   ).toBe(false);
+});
+
+it("shows a pointer only over the anchored range and restores the original cursor", () => {
+  setup();
+  const node = source();
+  mocks.resolveRange.mockReturnValue(range());
+  const stop = observeSidechatAnchors(
+    node.root,
+    [{ threadId: ThreadId.make("child"), citation }],
+    vi.fn(),
+  );
+  const move = (x: number, y: number, interactive = false) =>
+    node.handlers.get("pointermove")?.({
+      clientX: x,
+      clientY: y,
+      target: { closest: () => (interactive ? {} : null) },
+    } as unknown as Event);
+  move(30, 30);
+  expect(node.root.style.cursor).toBe("pointer");
+  move(90, 30);
+  expect(node.root.style.cursor).toBe("text");
+  move(30, 30, true);
+  expect(node.root.style.cursor).toBe("text");
+  move(30, 30);
+  node.handlers.get("pointerleave")?.({} as Event);
+  expect(node.root.style.cursor).toBe("text");
+  move(30, 30);
+  stop();
+  expect(node.root.style.cursor).toBe("text");
 });

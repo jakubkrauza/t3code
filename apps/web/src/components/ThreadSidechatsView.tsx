@@ -2,18 +2,36 @@ import type { AssistantCitation, RunId, ScopedThreadRef, ThreadId } from "@t3too
 import { CommandId } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { XIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { MessageSquareIcon, QuoteIcon } from "lucide-react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 
 import ChatView from "./ChatView";
 import { Button } from "./ui/button";
 import { newThreadId } from "~/lib/utils";
 import { sameSidechatCitation } from "~/lib/sidechats";
-import { useThreadShells, waitForThreadShell } from "~/state/entities";
+import { readThreadShell, waitForThreadShell } from "~/state/entities";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useThreadSidechats } from "~/state/sidechats";
+import { PreviewPanelShell } from "./preview/PreviewPanelShell";
+import { usePreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
+import { PanelTabCloseButton } from "./ui/panel-tab-close-button";
+import { Spinner } from "./ui/spinner";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
+import { cn } from "~/lib/utils";
+import { isElectron } from "~/env";
+
+const MainChatView = memo(ChatView);
 
 type SidechatSelection = {
   citation: AssistantCitation;
@@ -58,7 +76,9 @@ function SidechatPanel({
       if (forked._tag === "Failure") throw squashAtomCommandFailure(forked);
       const ref = scopeThreadRef(parentRef.environmentId, selection.threadId);
       if (!(await waitForThreadShell(ref))) {
-        throw new Error("Sidechat został zapisany, ale czekamy na połączenie. Spróbuj ponownie.");
+        throw new Error(
+          "The sidechat was saved, but the connection is still catching up. Try again.",
+        );
       }
       const drafts = useComposerDraftStore.getState();
       if (!drafts.getComposerDraft(ref)?.prompt) {
@@ -76,7 +96,7 @@ function SidechatPanel({
       },
       (cause: unknown) => {
         if (active)
-          setError(cause instanceof Error ? cause.message : "Nie udało się otworzyć sidechatu.");
+          setError(cause instanceof Error ? cause.message : "Could not open the sidechat.");
       },
     );
     return () => {
@@ -110,13 +130,14 @@ function SidechatPanel({
               setAttempt((value) => value + 1);
             }}
           >
-            Spróbuj ponownie
+            Try again
           </Button>
         </>
       ) : (
-        <p role="status" className="text-sm text-muted-foreground">
-          Otwieranie sidechatu…
-        </p>
+        <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Spinner size="sm" />
+          Opening sidechat…
+        </div>
       )}
     </div>
   );
@@ -128,75 +149,89 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
     [props.environmentId, props.threadId],
   );
   const parentKey = scopedThreadKey(parentRef);
-  const [panel, setPanel] = useState<{ parentKey: string; selection: SidechatSelection } | null>(
-    null,
-  );
+  const [panel, setPanel] = useState<{
+    parentKey: string;
+    selection: SidechatSelection;
+    open: boolean;
+  } | null>(null);
   const [activePane, setActivePane] = useState<"main" | "side">("main");
   const selection = panel?.parentKey === parentKey ? panel.selection : null;
-  const threads = useThreadShells();
-  const sidechatThreads = useMemo(
-    () =>
-      threads.filter(
-        (thread) =>
-          thread.environmentId === parentRef.environmentId &&
-          thread.sidechatSource?.parentThreadId === parentRef.threadId &&
-          thread.deletedAt === null,
-      ),
-    [threads, parentRef],
-  );
-  const sidechats = useMemo(
-    () =>
-      sidechatThreads.map((thread) => ({
-        threadId: thread.id,
-        citation: thread.sidechatSource!.citation,
-      })),
-    [sidechatThreads],
-  );
+  const panelOpen = panel?.parentKey === parentKey && panel.open;
+  const panelRef = useRef<HTMLElement | null>(null);
+  const inlineSize = usePreviewPanelInlineSize(panelRef, {
+    enabled: panelOpen,
+    widthStorageKey: "t3code:sidechat-panel-width",
+  });
+  const sidechats = useThreadSidechats(parentRef);
 
-  function openSidechat(threadId: ThreadId) {
-    const thread = sidechatThreads.find((candidate) => candidate.id === threadId);
-    if (!thread?.sidechatSource || thread.forkedFrom?.type !== "run") return;
-    setPanel({
-      parentKey,
-      selection: {
-        citation: thread.sidechatSource.citation,
-        runId: thread.forkedFrom.runId,
-        threadId,
-        created: true,
-      },
-    });
-    setActivePane("side");
-  }
-
-  function ask(citation: AssistantCitation, runId: RunId) {
-    const existing = sidechats.find((sidechat) =>
-      sameSidechatCitation(sidechat.citation, citation),
-    );
-    if (existing) {
-      openSidechat(existing.threadId);
-      return;
-    }
-    if (selection && sameSidechatCitation(selection.citation, citation)) {
+  const openSidechat = useCallback(
+    (threadId: ThreadId) => {
+      const thread = readThreadShell(scopeThreadRef(parentRef.environmentId, threadId));
+      if (
+        thread?.sidechatSource?.parentThreadId !== parentRef.threadId ||
+        thread.forkedFrom?.type !== "run"
+      )
+        return;
+      setPanel({
+        parentKey,
+        open: true,
+        selection: {
+          citation: thread.sidechatSource.citation,
+          runId: thread.forkedFrom.runId,
+          threadId,
+          created: true,
+        },
+      });
       setActivePane("side");
-      return;
-    }
-    setPanel({
-      parentKey,
-      selection: { citation, runId, threadId: newThreadId(), created: false },
-    });
-    setActivePane("side");
-  }
+    },
+    [parentKey, parentRef],
+  );
+
+  const closeSidechat = useCallback(() => {
+    setPanel((current) => (current ? { ...current, open: false } : current));
+    setActivePane("main");
+  }, []);
+  const markCreated = useCallback((threadId: ThreadId) => {
+    setPanel((current) =>
+      current?.selection.threadId === threadId
+        ? { ...current, selection: { ...current.selection, created: true } }
+        : current,
+    );
+  }, []);
+
+  const ask = useCallback(
+    (citation: AssistantCitation, runId: RunId) => {
+      const existing = sidechats.find((sidechat) =>
+        sameSidechatCitation(sidechat.citation, citation),
+      );
+      if (existing) {
+        openSidechat(existing.threadId);
+        return;
+      }
+      const threadId = newThreadId();
+      setPanel((current) =>
+        current?.parentKey === parentKey &&
+        sameSidechatCitation(current.selection.citation, citation)
+          ? { ...current, open: true }
+          : { parentKey, open: true, selection: { citation, runId, threadId, created: false } },
+      );
+      setActivePane("side");
+    },
+    [sidechats, openSidechat, parentKey],
+  );
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1">
       <div
         className="flex min-h-0 min-w-0 flex-1 flex-col"
-        onPointerDownCapture={() => setActivePane("main")}
+        onPointerDownCapture={(event) => {
+          if (!(event.target as Element).closest("[data-sidechat-hovered]")) setActivePane("main");
+        }}
         onFocusCapture={() => setActivePane("main")}
       >
-        <ChatView
+        <MainChatView
           {...props}
-          keyboardActive={selection === null || activePane === "main"}
+          keyboardActive={!panelOpen || activePane === "main"}
           onAskAssistantText={ask}
           sidechats={sidechats}
           onOpenSidechat={openSidechat}
@@ -204,41 +239,56 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
       </div>
       {selection ? (
         <aside
+          ref={panelRef}
           aria-label="Sidechat"
-          className="absolute inset-0 z-30 flex min-h-0 min-w-0 flex-col border-l bg-background md:static md:w-[44%] md:min-w-96 md:max-w-2xl"
+          aria-hidden={!panelOpen}
+          inert={!panelOpen}
+          className={cn(
+            "absolute inset-0 z-30 min-h-0 min-w-0 md:static md:shrink-0",
+            !panelOpen && "pointer-events-none invisible",
+          )}
           onPointerDownCapture={() => setActivePane("side")}
           onFocusCapture={() => setActivePane("side")}
         >
-          <header className="flex h-[var(--workspace-topbar-height)] shrink-0 items-center gap-2 border-b pr-3 pl-12 md:pl-3 [-webkit-app-region:no-drag]">
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label="Zamknij sidechat"
-              onClick={() => {
-                setPanel(null);
-                setActivePane("main");
-              }}
+          <PreviewPanelShell mode="inline" open={panelOpen} inlineSize={inlineSize}>
+            <header
+              className={cn(
+                "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pr-28 pl-2",
+                isElectron && "drag-region wco:pr-(--workspace-native-controls-inset)",
+              )}
             >
-              <XIcon className="size-4" />
-            </Button>
-            <span className="text-sm font-medium">Sidechat</span>
-          </header>
-          <blockquote className="max-h-32 shrink-0 overflow-auto border-b bg-muted/30 px-4 py-3 text-sm whitespace-pre-wrap">
-            {selection.citation.text}
-          </blockquote>
-          <SidechatPanel
-            key={`${parentKey}:${selection.threadId}`}
-            parentRef={parentRef}
-            selection={selection}
-            keyboardActive={activePane === "side"}
-            onCreated={(threadId) =>
-              setPanel((current) =>
-                current?.parentKey === parentKey && current.selection === selection
-                  ? { parentKey, selection: { ...selection, threadId, created: true } }
-                  : current,
-              )
-            }
-          />
+              <div className="group/tab flex h-6 items-center gap-1.5 rounded-md bg-accent pr-2 pl-1.5 text-xs text-foreground [-webkit-app-region:no-drag]">
+                <PanelTabCloseButton
+                  label="Close sidechat"
+                  tooltip="Close sidechat"
+                  onClick={closeSidechat}
+                >
+                  <MessageSquareIcon className="size-3" />
+                </PanelTabCloseButton>
+                <span>Sidechat</span>
+              </div>
+            </header>
+            <div className="flex shrink-0 items-start gap-2 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground">
+              <QuoteIcon className="mt-0.5 size-3.5 shrink-0" />
+              <Tooltip>
+                <TooltipTrigger
+                  render={<span className="line-clamp-3 text-left whitespace-pre-wrap" />}
+                >
+                  {selection.citation.text}
+                </TooltipTrigger>
+                <TooltipPopup className="max-w-sm whitespace-pre-wrap">
+                  {selection.citation.text}
+                </TooltipPopup>
+              </Tooltip>
+            </div>
+            <SidechatPanel
+              key={`${parentKey}:${selection.threadId}`}
+              parentRef={parentRef}
+              selection={selection}
+              keyboardActive={panelOpen && activePane === "side"}
+              onCreated={markCreated}
+            />
+          </PreviewPanelShell>
         </aside>
       ) : null}
     </div>

@@ -1,4 +1,5 @@
 import { ChatCanvas } from "./chat/ChatCanvas";
+import { Menu, MenuTrigger, MenuPopup, MenuItem } from "./ui/menu";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
   resolveBackgroundDraftWorkspaceOptions,
@@ -1823,7 +1824,7 @@ export default function ChatView(props: ChatViewProps) {
         !sourceRun ||
         !["completed", "waiting"].includes(sourceRun.status)
       ) {
-        toastManager.add({ type: "warning", title: "Poczekaj na zakończenie odpowiedzi" });
+        toastManager.add({ type: "warning", title: "Wait for the response to finish" });
         return false;
       }
       onAskAssistantText?.(citation, sourceRun.id);
@@ -3903,12 +3904,14 @@ export default function ChatView(props: ChatViewProps) {
     () => timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
     [timelineEntries],
   );
-  const displayedTimeline = resolveThreadSwitchTimeline({
-    loading: timelineEntries.length === 0 && threadSyncPhase !== null,
-    activeThreadKey,
-    nextEntries: timelineEntries,
-    rememberedForActive: peekRememberedThreadTimeline<typeof timelineEntries>(activeThreadKey),
-  });
+  const displayedTimeline = embedded
+    ? { entries: timelineEntries, displayThreadKey: activeThreadKey }
+    : resolveThreadSwitchTimeline({
+        loading: timelineEntries.length === 0 && threadSyncPhase !== null,
+        activeThreadKey,
+        nextEntries: timelineEntries,
+        rememberedForActive: peekRememberedThreadTimeline<typeof timelineEntries>(activeThreadKey),
+      });
   const displayedTimelineKey = displayedTimeline.displayThreadKey ?? routeThreadKey;
   const paintOnlyDisplayedTimeline = isPaintOnlyThreadTimeline(
     displayedTimeline.displayThreadKey,
@@ -4163,6 +4166,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   useLayoutEffect(() => {
     if (
+      embedded ||
       threadDetailLoading ||
       timelineEntries.length === 0 ||
       timelineHasEphemeralPreviewUrls(timelineEntries)
@@ -4175,7 +4179,14 @@ export default function ChatView(props: ChatViewProps) {
       markdownCwd: gitCwd,
       workspaceRoot: activeWorkspaceRoot ?? null,
     });
-  }, [activeThreadKey, activeWorkspaceRoot, gitCwd, threadDetailLoading, timelineEntries]);
+  }, [
+    activeThreadKey,
+    activeWorkspaceRoot,
+    embedded,
+    gitCwd,
+    threadDetailLoading,
+    timelineEntries,
+  ]);
   const heldPaintContext = paintOnlyDisplayedTimeline
     ? peekHeldThreadTimeline<typeof timelineEntries>()
     : null;
@@ -10929,28 +10940,29 @@ export default function ChatView(props: ChatViewProps) {
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
               : {})}
-          />
-        </header>
-
-        {sidechats && sidechats.length > 0 ? (
-          <nav
-            aria-label="Sidechaty tej rozmowy"
-            className="flex shrink-0 flex-wrap gap-1 border-b px-3 py-1"
           >
-            {sidechats.map((sidechat, index) => (
-              <Button
-                key={sidechat.threadId}
-                size="xs"
-                variant="ghost"
-                title={sidechat.citation.text}
-                onClick={() => onOpenSidechat?.(sidechat.threadId)}
-              >
-                <MessageSquareIcon className="size-3" />
-                Sidechat {index + 1}
-              </Button>
-            ))}
-          </nav>
-        ) : null}
+            {sidechats && sidechats.length > 0 ? (
+              <Menu>
+                <MenuTrigger
+                  render={<Button size="icon-xs" variant="ghost-muted" aria-label="Sidechats" />}
+                >
+                  <MessageSquareIcon className="size-3.5" />
+                </MenuTrigger>
+                <MenuPopup align="end">
+                  {sidechats.map((sidechat) => (
+                    <MenuItem
+                      key={sidechat.threadId}
+                      onClick={() => onOpenSidechat?.(sidechat.threadId)}
+                    >
+                      <MessageSquareIcon />
+                      <span className="max-w-64 truncate">{sidechat.citation.text}</span>
+                    </MenuItem>
+                  ))}
+                </MenuPopup>
+              </Menu>
+            ) : null}
+          </ChatHeader>
+        </header>
 
         {/* Main content area with optional plan sidebar */}
         <div className="relative flex min-h-0 min-w-0 flex-1">

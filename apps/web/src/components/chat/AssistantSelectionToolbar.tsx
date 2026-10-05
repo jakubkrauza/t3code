@@ -162,7 +162,7 @@ export function AssistantSelectionToolbar({
       {onAsk ? (
         <Button type="button" size="xs" variant="glass" disabled={tooLong} onClick={ask}>
           <MessageSquarePlusIcon aria-hidden="true" className="size-3.5" />
-          Dopytaj
+          Ask in sidechat
         </Button>
       ) : null}
     </div>,

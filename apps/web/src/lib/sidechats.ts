@@ -50,10 +50,10 @@ export function observeSidechatAnchors(
       ranges.push({ threadId, range, highlight, name });
     }
   };
-  const click = (event: MouseEvent) => {
-    if (root.ownerDocument.getSelection()?.toString()) return;
-    if ((event.target as Element).closest("a, button, [role=button]")) return;
-    const match = ranges.find(({ range }) =>
+  const originalCursor = root.style.cursor;
+  const hitTest = (event: MouseEvent) => {
+    if ((event.target as Element).closest("a, button, [role=button]")) return undefined;
+    return ranges.find(({ range }) =>
       Array.from(range.getClientRects()).some(
         (rect) =>
           event.clientX >= rect.left &&
@@ -62,15 +62,37 @@ export function observeSidechatAnchors(
           event.clientY <= rect.bottom,
       ),
     );
+  };
+  let hovered = false;
+  const move = (event: MouseEvent) => {
+    const next = hitTest(event) !== undefined;
+    if (next === hovered) return;
+    hovered = next;
+    root.toggleAttribute("data-sidechat-hovered", hovered);
+    root.style.cursor = hovered ? "pointer" : originalCursor;
+  };
+  const leave = () => {
+    hovered = false;
+    root.removeAttribute("data-sidechat-hovered");
+    root.style.cursor = originalCursor;
+  };
+  const click = (event: MouseEvent) => {
+    if (root.ownerDocument.getSelection()?.toString()) return;
+    const match = hitTest(event);
     if (match) onOpen(match.threadId);
   };
   update();
   const observer = new MutationObserver(update);
   observer.observe(root, { childList: true, characterData: true, subtree: true });
   root.addEventListener("click", click);
+  root.addEventListener("pointermove", move, { passive: true });
+  root.addEventListener("pointerleave", leave);
   return () => {
     observer.disconnect();
     root.removeEventListener("click", click);
+    root.removeEventListener("pointermove", move);
+    root.removeEventListener("pointerleave", leave);
+    leave();
     clear();
   };
 }
