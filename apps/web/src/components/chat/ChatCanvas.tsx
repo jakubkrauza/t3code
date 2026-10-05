@@ -7,6 +7,7 @@ import {
   type ComponentProps,
   type CSSProperties,
 } from "react";
+import { flushSync } from "react-dom";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
 import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
@@ -62,39 +63,50 @@ export function ChatCanvas({
     (key: string) => setPreview((current) => (current?.key === key ? null : current)),
     [],
   );
+  const measure = useCallback(() => {
+    const element = elementRef.current;
+    const probe = widthProbeRef.current;
+    if (!element || !probe) return;
+    const styles = getComputedStyle(probe);
+    const next = {
+      width: element.clientWidth,
+      height: element.clientHeight,
+      padding: Number.parseFloat(styles.paddingLeft),
+      maxChatWidth: Number.parseFloat(styles.width),
+      minChatWidth: Number.parseFloat(styles.minWidth),
+      composerHeight: composerOverlayElement?.getBoundingClientRect().height ?? 0,
+      timelineGutter: timelineElement
+        ? (timelineElement.offsetWidth - timelineElement.clientWidth) / 2
+        : 0,
+    };
+    setMeasurements((current) =>
+      Object.keys(next).every(
+        (key) => current[key as keyof typeof current] === next[key as keyof typeof next],
+      )
+        ? current
+        : next,
+    );
+  }, [composerOverlayElement, timelineElement]);
+  // Parent panel changes can resize the canvas during a React commit.
+  // Measure then, before the virtualizer observes an intermediate row width.
+  useLayoutEffect(() => {
+    measure();
+  });
   useLayoutEffect(() => {
     const element = elementRef.current;
     const probe = widthProbeRef.current;
     if (!element || !probe) return;
-    const measure = () => {
-      const styles = getComputedStyle(probe);
-      const next = {
-        width: element.clientWidth,
-        height: element.clientHeight,
-        padding: Number.parseFloat(styles.paddingLeft),
-        maxChatWidth: Number.parseFloat(styles.width),
-        minChatWidth: Number.parseFloat(styles.minWidth),
-        composerHeight: composerOverlayElement?.getBoundingClientRect().height ?? 0,
-        timelineGutter: timelineElement
-          ? (timelineElement.offsetWidth - timelineElement.clientWidth) / 2
-          : 0,
-      };
-      setMeasurements((current) =>
-        Object.keys(next).every(
-          (key) => current[key as keyof typeof current] === next[key as keyof typeof next],
-        )
-          ? current
-          : next,
-      );
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(() => {
+      // Apply lane geometry before paint. A deferred update briefly wraps the
+      // timeline using the old insets, making its scroll position jump twice.
+      flushSync(measure);
+    });
     observer.observe(element);
     observer.observe(probe);
     if (composerOverlayElement) observer.observe(composerOverlayElement);
     if (timelineElement) observer.observe(timelineElement);
     return () => observer.disconnect();
-  }, [composerOverlayElement, timelineElement]);
+  }, [composerOverlayElement, measure, timelineElement]);
   const context = useMemo(() => {
     const container = { width: measurements.width, height: measurements.height };
     return {
