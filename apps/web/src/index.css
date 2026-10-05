@@ -673,6 +673,12 @@ html[data-sidechat-transition="true"][data-sidechat-resizing="false"]::view-tran
   margin-left: var(--live-activity-focus-width);
 }
 
+@property --sidechat-pulse-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+
 @property --assistant-citation-highlight-opacity {
   syntax: "<number>";
   inherits: true;
@@ -688,24 +694,180 @@ html[data-sidechat-transition="true"][data-sidechat-resizing="false"]::view-tran
     );
   }
   ::highlight(t3-sidechat-0) {
-    background-color: oklch(0.75 0.15 300 / 0.25);
     text-decoration: underline;
-    text-decoration-color: oklch(0.65 0.2 300);
+    text-decoration-color: color-mix(in srgb, #60a5fa 65%, transparent);
+  }
+  ::highlight(t3-sidechat-0-active) {
+    background-color: color-mix(in srgb, #60a5fa 18%, transparent);
+  }
+  ::highlight(t3-sidechat-0-working) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(
+      in srgb,
+      #60a5fa calc(var(--sidechat-pulse-opacity) * 85%),
+      transparent
+    );
+  }
+  ::highlight(t3-sidechat-0-active-working) {
+    background-color: color-mix(
+      in srgb,
+      #60a5fa calc(var(--sidechat-pulse-opacity) * 24%),
+      transparent
+    );
   }
   ::highlight(t3-sidechat-1) {
-    background-color: oklch(0.75 0.15 220 / 0.25);
     text-decoration: underline;
-    text-decoration-color: oklch(0.65 0.2 220);
+    text-decoration-color: color-mix(in srgb, #f472b6 65%, transparent);
+  }
+  ::highlight(t3-sidechat-1-active) {
+    background-color: color-mix(in srgb, #f472b6 18%, transparent);
+  }
+  ::highlight(t3-sidechat-1-working) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(
+      in srgb,
+      #f472b6 calc(var(--sidechat-pulse-opacity) * 85%),
+      transparent
+    );
+  }
+  ::highlight(t3-sidechat-1-active-working) {
+    background-color: color-mix(
+      in srgb,
+      #f472b6 calc(var(--sidechat-pulse-opacity) * 24%),
+      transparent
+    );
   }
   ::highlight(t3-sidechat-2) {
-    background-color: oklch(0.75 0.15 145 / 0.25);
     text-decoration: underline;
-    text-decoration-color: oklch(0.65 0.2 145);
+    text-decoration-color: color-mix(in srgb, #34d399 65%, transparent);
+  }
+  ::highlight(t3-sidechat-2-active) {
+    background-color: color-mix(in srgb, #34d399 18%, transparent);
+  }
+  ::highlight(t3-sidechat-2-working) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(
+      in srgb,
+      #34d399 calc(var(--sidechat-pulse-opacity) * 85%),
+      transparent
+    );
+  }
+  ::highlight(t3-sidechat-2-active-working) {
+    background-color: color-mix(
+      in srgb,
+      #34d399 calc(var(--sidechat-pulse-opacity) * 24%),
+      transparent
+    );
   }
   ::highlight(t3-sidechat-3) {
-    background-color: oklch(0.75 0.15 70 / 0.25);
     text-decoration: underline;
-    text-decoration-color: oklch(0.65 0.2 70);
+    text-decoration-color: color-mix(in srgb, #fbbf24 65%, transparent);
+  }
+  ::highlight(t3-sidechat-3-active) {
+    background-color: color-mix(in srgb, #fbbf24 18%, transparent);
+  }
+  ::highlight(t3-sidechat-3-working) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(
+      in srgb,
+      #fbbf24 calc(var(--sidechat-pulse-opacity) * 85%),
+      transparent
+    );
+  }
+  ::highlight(t3-sidechat-3-active-working) {
+    background-color: color-mix(
+      in srgb,
+      #fbbf24 calc(var(--sidechat-pulse-opacity) * 24%),
+      transparent
+    );
+  }
+  ::highlight(t3-sidechat-4) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, #a78bfa 65%, transparent);
+  }
+  ::highlight(t3-sidechat-4-active) {
+    background-color: color-mix(in srgb, #a78bfa 18%, transparent);
+  }
+  ::highlight(t3-sidechat-4-working) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(
+      in srgb,
+      #a78bfa calc(var(--sidechat-pulse-opacity) * 85%),
+      transparent
+    );
+  }
+  ::highlight(t3-sidechat-4-active-working) {
+    background-color: color-mix(
+      in srgb,
+      #a78bfa calc(var(--sidechat-pulse-opacity) * 24%),
+      transparent
+    );
+  }
+  ::highlight(t3-sidechat-5) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, #fb923c 65%, transparent);
+  }
+  ::highlight(t3-sidechat-5-active) {
+    background-color: color-mix(in srgb, #fb923c 18%, transparent);
+  }
+  ::highlight(t3-sidechat-5-working) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(
+      in srgb,
+      #fb923c calc(var(--sidechat-pulse-opacity) * 85%),
+      transparent
+    );
+  }
+  ::highlight(t3-sidechat-5-active-working) {
+    background-color: color-mix(
+      in srgb,
+      #fb923c calc(var(--sidechat-pulse-opacity) * 24%),
+      transparent
+    );
+  }
+  ::highlight(t3-sidechat-6) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, #22d3ee 65%, transparent);
+  }
+  ::highlight(t3-sidechat-6-active) {
+    background-color: color-mix(in srgb, #22d3ee 18%, transparent);
+  }
+  ::highlight(t3-sidechat-6-working) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(
+      in srgb,
+      #22d3ee calc(var(--sidechat-pulse-opacity) * 85%),
+      transparent
+    );
+  }
+  ::highlight(t3-sidechat-6-active-working) {
+    background-color: color-mix(
+      in srgb,
+      #22d3ee calc(var(--sidechat-pulse-opacity) * 24%),
+      transparent
+    );
+  }
+  ::highlight(t3-sidechat-7) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, #a3e635 65%, transparent);
+  }
+  ::highlight(t3-sidechat-7-active) {
+    background-color: color-mix(in srgb, #a3e635 18%, transparent);
+  }
+  ::highlight(t3-sidechat-7-working) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(
+      in srgb,
+      #a3e635 calc(var(--sidechat-pulse-opacity) * 85%),
+      transparent
+    );
+  }
+  ::highlight(t3-sidechat-7-active-working) {
+    background-color: color-mix(
+      in srgb,
+      #a3e635 calc(var(--sidechat-pulse-opacity) * 24%),
+      transparent
+    );
   }
 
   ::highlight(t3-assistant-citation-comment) {

@@ -164,6 +164,11 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
     widthStorageKey: "t3code:sidechat-panel-width",
   });
   const sidechats = useThreadSidechats(parentRef);
+  const activeSidechatId = panelOpen ? selection?.threadId : null;
+  const markedSidechats = useMemo(
+    () => sidechats.map((anchor) => ({ ...anchor, active: anchor.threadId === activeSidechatId })),
+    [sidechats, activeSidechatId],
+  );
 
   const openSidechat = useCallback(
     (threadId: ThreadId) => {
@@ -238,7 +243,7 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
           {...props}
           keyboardActive={!panelOpen || activePane === "main"}
           onAskAssistantText={ask}
-          sidechats={sidechats}
+          sidechats={markedSidechats}
           onOpenSidechat={openSidechat}
         />
       </div>

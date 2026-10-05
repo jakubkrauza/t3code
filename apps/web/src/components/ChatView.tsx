@@ -160,6 +160,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import type { SidechatAnchor } from "~/lib/sidechats";
 import { useShallow } from "zustand/react/shallow";
 import {
   isAtomCommandInterrupted,
@@ -804,7 +805,7 @@ type ChatViewProps = {
   embedded?: boolean;
   keyboardActive?: boolean;
   onAskAssistantText?: (citation: AssistantCitation, runId: RunId) => void;
-  sidechats?: ReadonlyArray<{ threadId: ThreadId; citation: AssistantCitation }>;
+  sidechats?: ReadonlyArray<SidechatAnchor>;
   onOpenSidechat?: (threadId: ThreadId) => void;
 } & (
   | {

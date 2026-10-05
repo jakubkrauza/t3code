@@ -5,7 +5,7 @@ import { Atom } from "effect/unstable/reactivity";
 import { sameSidechatCitation, type SidechatAnchor } from "~/lib/sidechats";
 import { environmentThreadShells } from "./threads";
 
-// Streaming status and title updates do not change a message's anchored conversations.
+// Only starting/stopping work changes the marks; streaming tokens and titles do not.
 const sidechatAnchorsAtom = Atom.family((key: string) => {
   const parent = parseScopedThreadKey(key)!;
   let previous: ReadonlyArray<SidechatAnchor> = [];
@@ -15,12 +15,20 @@ const sidechatAnchorsAtom = Atom.family((key: string) => {
         (thread) =>
           thread.deletedAt === null && thread.sidechatSource?.parentThreadId === parent.threadId,
       )
-      .map((thread) => ({ threadId: thread.id, citation: thread.sidechatSource!.citation }));
+      .map((thread) => ({
+        threadId: thread.id,
+        citation: thread.sidechatSource!.citation,
+        working:
+          thread.status === "preparing" ||
+          thread.status === "starting" ||
+          thread.status === "running",
+      }));
     if (
       next.length === previous.length &&
       next.every(
         (anchor, index) =>
           anchor.threadId === previous[index]!.threadId &&
+          anchor.working === previous[index]!.working &&
           sameSidechatCitation(anchor.citation, previous[index]!.citation),
       )
     )

@@ -182,6 +182,7 @@ import { PierreEntryIcon } from "./PierreEntryIcon";
 import { inferEntryKindFromPath } from "../../pierre-icons";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import type { SidechatAnchor } from "~/lib/sidechats";
 import {
   AssistantCitationSource,
   type AssistantCitationRequest,
@@ -294,7 +295,7 @@ import {
 // ---------------------------------------------------------------------------
 
 interface TimelineRowSharedState {
-  sidechats: ReadonlyArray<{ threadId: ThreadId; citation: AssistantCitation }>;
+  sidechats: ReadonlyArray<SidechatAnchor>;
   onOpenSidechat: ((threadId: ThreadId) => void) | undefined;
   citationRequest: AssistantCitationTarget | null;
   listRef: React.RefObject<LegendListRef | null>;
@@ -392,7 +393,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
     layout: true,
   },
 } as const satisfies MaintainScrollAtEndOptions;
-const EMPTY_SIDECHATS: ReadonlyArray<{ threadId: ThreadId; citation: AssistantCitation }> = [];
+const EMPTY_SIDECHATS: ReadonlyArray<SidechatAnchor> = [];
 const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
 // Streamed text lands a paragraph at a time. A smooth scroll to the end
@@ -416,7 +417,7 @@ export interface MessagesTimelineHistoryControls {
 
 interface MessagesTimelineProps {
   onAskAssistantText?: ((citation: AssistantCitation) => boolean) | undefined;
-  sidechats?: ReadonlyArray<{ threadId: ThreadId; citation: AssistantCitation }> | undefined;
+  sidechats?: ReadonlyArray<SidechatAnchor> | undefined;
   onOpenSidechat?: ((threadId: ThreadId) => void) | undefined;
   citationRequest?: AssistantCitationRequest | null;
   citationHistoryLoading?: boolean;
