@@ -244,6 +244,7 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
           keyboardActive={!panelOpen || activePane === "main"}
           onAskAssistantText={ask}
           sidechats={markedSidechats}
+          showSidechatMenu={!panelOpen}
           onOpenSidechat={openSidechat}
         />
       </div>

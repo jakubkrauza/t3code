@@ -806,6 +806,7 @@ type ChatViewProps = {
   keyboardActive?: boolean;
   onAskAssistantText?: (citation: AssistantCitation, runId: RunId) => void;
   sidechats?: ReadonlyArray<SidechatAnchor>;
+  showSidechatMenu?: boolean;
   onOpenSidechat?: (threadId: ThreadId) => void;
 } & (
   | {
@@ -1534,6 +1535,7 @@ export default function ChatView(props: ChatViewProps) {
     keyboardActive = true,
     onAskAssistantText,
     sidechats,
+    showSidechatMenu = true,
     onOpenSidechat,
     routeKind,
     onDiffPanelOpen,
@@ -10942,7 +10944,7 @@ export default function ChatView(props: ChatViewProps) {
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
               : {})}
           >
-            {sidechats && sidechats.length > 0 ? (
+            {showSidechatMenu && sidechats && sidechats.length > 0 ? (
               <Menu>
                 <MenuTrigger
                   render={<Button size="icon-xs" variant="ghost-muted" aria-label="Sidechats" />}
