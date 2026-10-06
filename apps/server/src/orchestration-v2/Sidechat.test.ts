@@ -180,6 +180,8 @@ it.effect("persists a sidechat anchor in both thread detail and shell, and retri
       detail.thread.sidechatSource,
     );
     assert.equal(detail.contextTransfers.length, 1);
+    assert.equal(detail.thread.runtimeMode, "approval-required");
+    assert.equal(detail.thread.interactionMode, "default");
     assert.deepEqual(detail.thread.forkedFrom, {
       type: "run",
       threadId: sourceThreadId,
@@ -200,5 +202,85 @@ it.effect(
         .pipe(Effect.flip);
       assert.equal(error._tag, "OrchestratorDispatchError");
       assert.isNull(yield* orchestrator.getThreadShell(targetThreadId));
+    }).pipe(Effect.provide(layer)),
+);
+
+it.effect("deletes anchored children with their parent, preserving ordinary forks", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* seed;
+    yield* orchestrator.dispatch(forkCommand());
+    const ordinaryId = ThreadId.make("ordinary-fork");
+    const { sidechatSource: _anchor, ...ordinary } = forkCommand();
+    yield* orchestrator.dispatch({
+      ...ordinary,
+      commandId: CommandId.make("ordinary-fork"),
+      targetThreadId: ordinaryId,
+    });
+    const command = {
+      type: "thread.delete" as const,
+      commandId: CommandId.make("delete-parent"),
+      threadId: sourceThreadId,
+    };
+    const result = yield* orchestrator.dispatch(command);
+    assert.equal((yield* orchestrator.dispatch(command)).sequence, result.sequence);
+    assert.isNotNull((yield* orchestrator.getThreadProjection(sourceThreadId)).thread.deletedAt);
+    assert.isNotNull((yield* orchestrator.getThreadProjection(targetThreadId)).thread.deletedAt);
+    assert.isNull((yield* orchestrator.getThreadProjection(ordinaryId)).thread.deletedAt);
+    const error = yield* orchestrator
+      .dispatch({
+        ...forkCommand(),
+        commandId: CommandId.make("fork-deleted"),
+        targetThreadId: ThreadId.make("late-child"),
+      })
+      .pipe(Effect.flip);
+    assert.equal(error._tag, "OrchestratorDispatchError");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "cancels a running sidechat when the parent is deleted and rejects access escalation",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* seed;
+      yield* orchestrator.dispatch(forkCommand());
+      const escalation = yield* orchestrator
+        .dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("escalate-sidechat"),
+          threadId: targetThreadId,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+      assert.equal(escalation._tag, "OrchestratorDispatchError");
+      const source = yield* orchestrator.getThreadProjection(sourceThreadId);
+      const run = {
+        ...source.runs[0]!,
+        id: RunId.make("sidechat-active-run"),
+        threadId: targetThreadId,
+        status: "running" as const,
+        completedAt: null,
+      };
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            type: "run.created",
+            id: EventId.make("sidechat-active-run-event"),
+            threadId: targetThreadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: run,
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("delete-active-sidechat-parent"),
+        threadId: sourceThreadId,
+      });
+      const child = yield* orchestrator.getThreadProjection(targetThreadId);
+      assert.equal(child.runs.find((item) => item.id === run.id)?.status, "cancelled");
+      assert.isNotNull(child.thread.deletedAt);
     }).pipe(Effect.provide(layer)),
 );

@@ -1,3 +1,4 @@
+import { sidechatRunForCitation } from "~/lib/sidechats";
 import { ChatCanvas } from "./chat/ChatCanvas";
 import { Menu, MenuTrigger, MenuPopup, MenuItem } from "./ui/menu";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -803,6 +804,7 @@ function isCompactCommandMessage(message: ChatMessage): boolean {
 
 type ChatViewProps = {
   embedded?: boolean;
+  canvasLayoutKey?: number;
   keyboardActive?: boolean;
   onAskAssistantText?: (citation: AssistantCitation, runId: RunId) => void;
   sidechats?: ReadonlyArray<SidechatAnchor>;
@@ -1532,6 +1534,7 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     threadId,
     embedded = false,
+    canvasLayoutKey,
     keyboardActive = true,
     onAskAssistantText,
     sidechats,
@@ -1819,21 +1822,19 @@ export default function ChatView(props: ChatViewProps) {
   );
   const askAssistantText = useCallback(
     (citation: AssistantCitation) => {
-      const message = serverProjection?.messages.find((item) => item.id === citation.messageId);
-      const sourceRun = serverProjection?.runs.find((run) => run.id === message?.runId);
-      if (
-        !message ||
-        message.streaming ||
-        !sourceRun ||
-        !["completed", "waiting"].includes(sourceRun.status)
-      ) {
+      const sourceRunId = sidechatRunForCitation(
+        citation,
+        serverVisibleTurnItems,
+        serverProjection?.runs ?? [],
+      );
+      if (sourceRunId === null) {
         toastManager.add({ type: "warning", title: "Wait for the response to finish" });
         return false;
       }
-      onAskAssistantText?.(citation, sourceRun.id);
+      onAskAssistantText?.(citation, sourceRunId);
       return true;
     },
-    [onAskAssistantText, serverProjection],
+    [onAskAssistantText, serverProjection, serverVisibleTurnItems],
   );
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
@@ -3857,7 +3858,9 @@ export default function ChatView(props: ChatViewProps) {
   const timelineVisibleTurnItems = useMemo(
     () =>
       embedded && serverThread?.sidechatSource
-        ? serverVisibleTurnItems.filter((row) => row.visibility === "local")
+        ? serverVisibleTurnItems.filter(
+            (row) => row.visibility === "local" && row.item.type !== "checkpoint",
+          )
         : serverVisibleTurnItems,
     [embedded, serverThread?.sidechatSource, serverVisibleTurnItems],
   );
@@ -7725,6 +7728,17 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (
+        embedded &&
+        (command?.startsWith("terminal.") ||
+          command?.startsWith("rightPanel.") ||
+          command?.startsWith("threadPanel."))
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -7895,7 +7909,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       const scriptId = projectScriptIdFromCommand(command);
-      if (!scriptId || !activeProject) return;
+      if (embedded || !scriptId || !activeProject) return;
       const script = activeProjectScripts.find((entry) => entry.id === scriptId);
       if (!script) return;
       event.preventDefault();
@@ -7905,6 +7919,7 @@ export default function ChatView(props: ChatViewProps) {
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, [
+    embedded,
     activeProject,
     activeRightPanelSurface,
     activeProjectScripts,
@@ -10297,6 +10312,13 @@ export default function ChatView(props: ChatViewProps) {
       if (!activeThread) {
         return null;
       }
+      const provider = providerStatuses.find((entry) => entry.instanceId === instanceId);
+      if (
+        serverThread?.sidechatSource &&
+        provider?.driver !== "codex" &&
+        provider?.driver !== "claudeAgent"
+      )
+        return "Read-only sidechats support Codex and Claude.";
       const reason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeRuntime !== null,
@@ -10307,7 +10329,13 @@ export default function ChatView(props: ChatViewProps) {
       });
       return reason ? `${reason.description} Start a new thread to use this model.` : null;
     },
-    [activeRuntime, activeThread, providerStatuses, supportsProviderSwitchingViaHandoff],
+    [
+      activeRuntime,
+      activeThread,
+      serverThread?.sidechatSource,
+      providerStatuses,
+      supportsProviderSwitchingViaHandoff,
+    ],
   );
 
   const onProviderModelSelect = useCallback(
@@ -10971,6 +10999,7 @@ export default function ChatView(props: ChatViewProps) {
         <div className="relative flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
           <ChatCanvas
+            layoutKey={canvasLayoutKey}
             composerOverlayElement={isDraftHeroState ? null : composerOverlayElement}
             data-chat-workspace-drop-target="true"
             onDragEnter={workspaceFileDropHandlers.onDragEnter}
@@ -11056,7 +11085,9 @@ export default function ChatView(props: ChatViewProps) {
                 latestRun={paintOnlyDisplayedTimeline ? null : activeActivityRun}
                 runningRunId={paintOnlyDisplayedTimeline ? null : activeRunningTurnId}
                 turnDiffSummaries={
-                  paintOnlyDisplayedTimeline ? EMPTY_HELD_TURN_DIFF_SUMMARIES : turnDiffSummaries
+                  embedded || paintOnlyDisplayedTimeline
+                    ? EMPTY_HELD_TURN_DIFF_SUMMARIES
+                    : turnDiffSummaries
                 }
                 activeThreadEnvironmentId={
                   displayedThreadRef?.environmentId ?? activeThread.environmentId
@@ -11318,6 +11349,7 @@ export default function ChatView(props: ChatViewProps) {
                               threadSyncPhase={
                                 activeEnvironmentUnavailable ? null : threadSyncPhase
                               }
+                              readOnly={serverThread?.sidechatSource !== undefined}
                               runtimeMode={runtimeMode}
                               interactionMode={interactionMode}
                               lockedProvider={modelPickerLockedProvider}
@@ -11532,32 +11564,36 @@ export default function ChatView(props: ChatViewProps) {
         </div>
         {/* end horizontal flex container */}
 
-        {mountedTerminalThreadRefs
-          .filter(
-            ({ key, threadRef }) =>
-              key === activeThreadKey || (!embedded && !readThreadShell(threadRef)?.sidechatSource),
-          )
-          .map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
-            <PersistentThreadTerminalDrawer
-              key={mountedThreadKey}
-              threadRef={mountedThreadRef}
-              threadId={mountedThreadRef.threadId}
-              active={mountedThreadKey === activeThreadKey}
-              launchContext={
-                mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
-              }
-              focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
-              splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-              splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-              newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-              closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-              keybindings={keybindings}
-              onAddTerminalContext={addTerminalContextToDraft}
-            />
-          ))}
+        {!embedded &&
+          mountedTerminalThreadRefs
+            .filter(
+              ({ key, threadRef }) =>
+                key === activeThreadKey ||
+                (!embedded && !readThreadShell(threadRef)?.sidechatSource),
+            )
+            .map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
+              <PersistentThreadTerminalDrawer
+                key={mountedThreadKey}
+                threadRef={mountedThreadRef}
+                threadId={mountedThreadRef.threadId}
+                active={mountedThreadKey === activeThreadKey}
+                launchContext={
+                  mountedThreadKey === activeThreadKey
+                    ? (activeTerminalLaunchContext ?? null)
+                    : null
+                }
+                focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
+                splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+                splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
+                newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+                closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+                keybindings={keybindings}
+                onAddTerminalContext={addTerminalContextToDraft}
+              />
+            ))}
       </div>
 
-      {rightPanelPresent && !shouldUsePlanSidebarSheet && activeThreadRef ? (
+      {!embedded && rightPanelPresent && !shouldUsePlanSidebarSheet && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
           open={rightPanelOpen}
@@ -11600,7 +11636,7 @@ export default function ChatView(props: ChatViewProps) {
           {rightPanelContent}
         </RightPanelTabs>
       ) : null}
-      {rightPanelPresent && shouldUsePlanSidebarSheet && activeThreadRef ? (
+      {!embedded && rightPanelPresent && shouldUsePlanSidebarSheet && activeThreadRef ? (
         <RightPanelSheet
           animationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
           open={rightPanelOpen}

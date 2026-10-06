@@ -106,7 +106,11 @@ in either conversation do not automatically enter the other.
 
 Sidechats stay out of the main sidebar. Click a marked passage or use the
 Sidechats menu in the parent conversation header to reopen its history. Closing the panel keeps the
-conversation saved. Both conversations still use the same project files.
+conversation saved. Deleting the parent conversation deletes its sidechats too.
+
+Sidechats support Codex and Claude. They can discuss the inherited conversation and
+read project files, but cannot edit files or request elevated access. Project changes
+remain part of the main conversation. Sidechats do not create file checkpoints.
 
 ## Recall a sent prompt
 

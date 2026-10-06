@@ -68,7 +68,7 @@ afterEach(async () => {
 async function render(revision = 0) {
   await act(async () => {
     root.render(
-      <ChatCanvas composerOverlayElement={null} data-revision={revision}>
+      <ChatCanvas composerOverlayElement={null} layoutKey={revision}>
         <DetailsCard />
       </ChatCanvas>,
     );
@@ -106,4 +106,12 @@ it("commits an external resize before the observer returns, without waiting for 
     notifyResize();
     expect(Number.parseFloat(laneInset())).toBeGreaterThan(0);
   });
+});
+
+it("does not remeasure unchanged geometry when message content renders again", async () => {
+  await render();
+  const measure = vi.spyOn(globalThis, "getComputedStyle");
+  measure.mockClear();
+  await render();
+  expect(measure).not.toHaveBeenCalled();
 });

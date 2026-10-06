@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  MessageId,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
@@ -3477,4 +3478,56 @@ it.effect(
       });
       assert.isFalse(denied?.capabilities?.has("device"));
     }),
+);
+
+it.effect("gives sidechats no T3 MCP mutation or browser capabilities", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("sidechat-mcp-read-only");
+      const event = yield* makeThreadCreatedEvent({ idAllocator, threadId, now });
+      yield* eventSink.write({
+        events: [
+          {
+            ...event,
+            payload: {
+              ...event.payload,
+              sidechatSource: {
+                parentThreadId: ThreadId.make("parent"),
+                citation: {
+                  version: 1,
+                  environmentId: EnvironmentId.make("local"),
+                  threadId: ThreadId.make("parent"),
+                  messageId: MessageId.make("message"),
+                  text: "quote",
+                  start: 0,
+                  end: 5,
+                  prefix: "",
+                  suffix: "",
+                },
+              },
+            },
+          },
+        ],
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      const config = (yield* Ref.get(mcpConfigs)).at(-1);
+      assert.isDefined(config);
+      const scope = yield* registry.resolve(config!.authorizationHeader.replace(/^Bearer\s+/, ""));
+      assert.isDefined(scope);
+      assert.equal(scope!.capabilities.size, 0);
+    }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1_000, mcpConfigs })));
+  }),
 );

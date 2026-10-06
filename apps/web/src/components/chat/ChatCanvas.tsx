@@ -18,10 +18,12 @@ import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLay
  */
 export function ChatCanvas({
   composerOverlayElement,
+  layoutKey,
   children,
   ...props
 }: Omit<ComponentProps<"div">, "className" | "style" | "ref"> & {
   composerOverlayElement: HTMLElement | null;
+  layoutKey?: number | undefined;
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
@@ -91,7 +93,8 @@ export function ChatCanvas({
   // Measure then, before the virtualizer observes an intermediate row width.
   useLayoutEffect(() => {
     measure();
-  });
+    // eslint-disable-next-line react/exhaustive-effect-dependencies -- Sibling width changes require a measurement before paint.
+  }, [measure, layoutKey]);
   useLayoutEffect(() => {
     const element = elementRef.current;
     const probe = widthProbeRef.current;

@@ -158,6 +158,7 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
   const [activePane, setActivePane] = useState<"main" | "side">("main");
   const selection = panel?.parentKey === parentKey ? panel.selection : null;
   const panelOpen = panel?.parentKey === parentKey && panel.open;
+  const mainRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const inlineSize = usePreviewPanelInlineSize(panelRef, {
     enabled: panelOpen,
@@ -196,6 +197,9 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
     runSidechatTransition(() => {
       setPanel((current) => (current ? { ...current, open: false } : current));
       setActivePane("main");
+      mainRef.current
+        ?.querySelector<HTMLElement>('[data-testid="composer-editor"]')
+        ?.focus({ preventScroll: true });
     });
   }, []);
   const markCreated = useCallback((threadId: ThreadId) => {
@@ -234,6 +238,7 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
       <div
         className="flex min-h-0 min-w-0 flex-1 flex-col"
         data-sidechat-main
+        ref={mainRef}
         onPointerDownCapture={(event) => {
           if (!(event.target as Element).closest("[data-sidechat-hovered]")) setActivePane("main");
         }}
@@ -241,6 +246,7 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
       >
         <MainChatView
           {...props}
+          canvasLayoutKey={panelOpen ? inlineSize.width : 0}
           keyboardActive={!panelOpen || activePane === "main"}
           onAskAssistantText={ask}
           sidechats={markedSidechats}

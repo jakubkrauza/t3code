@@ -1,4 +1,9 @@
-import type { AssistantCitation, ThreadId } from "@t3tools/contracts";
+import type {
+  AssistantCitation,
+  ThreadId,
+  OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2Run,
+} from "@t3tools/contracts";
 import { resolveAssistantCitationRange } from "./assistantTextSelection";
 
 export type SidechatAnchor = {
@@ -7,6 +12,25 @@ export type SidechatAnchor = {
   active?: boolean;
   working?: boolean;
 };
+
+/** History pages contain timeline items, not the bounded conversation message array. */
+export function sidechatRunForCitation(
+  citation: AssistantCitation,
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">>,
+) {
+  const message = items.find(
+    (row) =>
+      row.sourceThreadId === citation.threadId &&
+      row.item.type === "assistant_message" &&
+      row.item.messageId === citation.messageId,
+  )?.item;
+  if (message?.type !== "assistant_message" || message.streaming) return null;
+  const run = runs.find((candidate) => candidate.id === message.runId);
+  return run && ["completed", "waiting", "failed", "interrupted", "cancelled"].includes(run.status)
+    ? run.id
+    : null;
+}
 
 function sidechatColorIndex(threadId: ThreadId): number {
   // Match chat-ux: spread UUIDs across eight colors without changing them on reload.

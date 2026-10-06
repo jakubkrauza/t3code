@@ -106,6 +106,9 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           activeProviderThreadId: null,
           // Ordinary forks of a sidechat are ordinary threads again.
           sidechatSource: input.sidechatSource,
+          ...(input.sidechatSource
+            ? { runtimeMode: "approval-required" as const, interactionMode: "default" as const }
+            : {}),
           lineage: {
             parentThreadId: input.sourceProjection.thread.id,
             relationshipToParent: "fork",

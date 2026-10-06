@@ -1,9 +1,18 @@
-import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import {
+  EnvironmentId,
+  MessageId,
+  ThreadId,
+  RunId,
+  TurnItemId,
+  type OrchestrationV2ProjectedTurnItem,
+  type AssistantCitation,
+} from "@t3tools/contracts";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({ resolveRange: vi.fn() }));
 vi.mock("./assistantTextSelection", () => ({ resolveAssistantCitationRange: mocks.resolveRange }));
-import { observeSidechatAnchors, sameSidechatCitation } from "./sidechats";
+import { observeSidechatAnchors, sameSidechatCitation, sidechatRunForCitation } from "./sidechats";
 
 const citation: AssistantCitation = {
   version: 1,
@@ -255,4 +264,67 @@ it("shows a pointer only over the anchored range and restores the original curso
   move(30, 30);
   stop();
   expect(node.root.style.cursor).toBe("text");
+});
+
+it("opens a sidechat from a history item without needing the bounded messages array", () => {
+  const runId = RunId.make("old-run");
+  const item: OrchestrationV2ProjectedTurnItem = {
+    position: 0,
+    visibility: "local",
+    sourceThreadId: citation.threadId,
+    sourceItemId: TurnItemId.make("old-item"),
+    item: {
+      id: TurnItemId.make("old-item"),
+      threadId: citation.threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed",
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: DateTime.makeUnsafe("2026-10-06T12:00:00.000Z"),
+      type: "assistant_message",
+      messageId: citation.messageId,
+      text: citation.text,
+      streaming: false,
+    },
+  };
+  if (item.item.type !== "assistant_message") throw new Error("Expected an assistant message");
+  for (const status of ["completed", "waiting", "interrupted", "cancelled", "failed"] as const) {
+    expect(sidechatRunForCitation(citation, [item], [{ id: runId, status }])).toBe(runId);
+  }
+  expect(sidechatRunForCitation(citation, [item], [{ id: runId, status: "running" }])).toBeNull();
+  expect(
+    sidechatRunForCitation(citation, [item], [{ id: runId, status: "rolled_back" }]),
+  ).toBeNull();
+  expect(
+    sidechatRunForCitation(
+      citation,
+      [
+        {
+          ...item,
+          item: {
+            ...item.item,
+            type: "assistant_message",
+            messageId: citation.messageId,
+            text: citation.text,
+            streaming: true,
+          },
+        },
+      ],
+      [{ id: runId, status: "completed" }],
+    ),
+  ).toBeNull();
+  expect(
+    sidechatRunForCitation(
+      { ...citation, messageId: MessageId.make("other-message") },
+      [item],
+      [{ id: runId, status: "completed" }],
+    ),
+  ).toBeNull();
 });

@@ -2359,6 +2359,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (
+      thread.sidechatSource &&
+      ((command.type === "thread.runtime-mode.set" &&
+        command.runtimeMode !== "approval-required") ||
+        (command.type === "thread.interaction-mode.set" && command.interactionMode !== "default"))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Sidechats are read-only discussions.",
+      });
+    }
+    if (
       command.type === "thread.pull-request.watch" &&
       command.watching &&
       isProviderNativeSubagentThread(thread)
@@ -3389,6 +3401,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
 
+    if (sourceProjection.thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Cannot fork a deleted thread.",
+      });
+    }
     const sourceRun = runForSourcePoint(sourceProjection, command.sourcePoint);
 
     if (sourceRun === null) {
@@ -3443,6 +3462,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         createdAt: now,
       })
       .pipe(mapDispatchError(command));
+
+    if (command.sidechatSource) {
+      yield* runtimePolicy
+        .resolve({ thread: targetThread, modelSelection: targetThread.modelSelection })
+        .pipe(mapDispatchError(command));
+    }
 
     yield* emitEvent({
       type: "thread.created",
@@ -9514,17 +9539,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
-        return yield* mapDispatchError(command)(
-          planThreadDeletion({
-            command,
-            projection,
+        const threadIds = new Set([command.threadId]);
+        const now = yield* DateTime.now;
+        for (const threadId of threadIds) {
+          for (const childId of yield* projectionStore
+            .getSidechatThreadIds(threadId)
+            .pipe(mapDispatchError(command)))
+            threadIds.add(childId);
+          const target =
+            threadId === command.threadId
+              ? projection
+              : yield* projectionStore
+                  .getThreadRecords(threadId, [
+                    "runs",
+                    "attempts",
+                    "nodes",
+                    "runtimeRequests",
+                    "subagents",
+                    "providerSessions",
+                  ])
+                  .pipe(mapDispatchError(command));
+          const plan = yield* planThreadDeletion({
+            command: { ...command, threadId },
+            projection: target,
             attachmentIds: yield* projectionStore
-              .getThreadAttachmentIds(command.threadId)
+              .getThreadAttachmentIds(threadId)
               .pipe(mapDispatchError(command)),
-            now: yield* DateTime.now,
+            now,
             idAllocator,
-          }),
-        );
+          }).pipe(mapDispatchError(command));
+          yield* Ref.update(events, (current) => [...current, ...plan.events]);
+          yield* Ref.update(effects, (current) => [...current, ...plan.effects]);
+        }
+        break;
       }
       case "thread.archive":
       case "thread.unarchive":
