@@ -102,7 +102,8 @@ On web and desktop, select a passage in a completed assistant response and choos
 panel. It uses the regular message composer with the selected passage attached
 as a quote. The panel shows only the sidechat's own messages. It starts with the
 context T3 can inherit through the selected provider's existing fork mechanism. Later messages
-in either conversation do not automatically enter the other.
+in either conversation do not automatically enter the other. For conversations imported from an
+older version, the sidechat receives the saved history up to the selected response.
 
 Sidechats stay out of the main sidebar. Click a marked passage or use the
 Sidechats menu in the parent conversation header to reopen its history. Closing the panel keeps the

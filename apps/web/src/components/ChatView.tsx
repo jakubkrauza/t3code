@@ -1,4 +1,8 @@
-import { sidechatRunForCitation } from "~/lib/sidechats";
+import {
+  sidechatSourcePointForCitation,
+  sidechatVisibleTurnItems,
+  type SidechatSourcePoint,
+} from "~/lib/sidechats";
 import { ChatCanvas } from "./chat/ChatCanvas";
 import { Menu, MenuTrigger, MenuPopup, MenuItem } from "./ui/menu";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -806,7 +810,7 @@ type ChatViewProps = {
   embedded?: boolean;
   canvasLayoutKey?: number;
   keyboardActive?: boolean;
-  onAskAssistantText?: (citation: AssistantCitation, runId: RunId) => void;
+  onAskAssistantText?: (citation: AssistantCitation, sourcePoint: SidechatSourcePoint) => void;
   sidechats?: ReadonlyArray<SidechatAnchor>;
   showSidechatMenu?: boolean;
   onOpenSidechat?: (threadId: ThreadId) => void;
@@ -1822,16 +1826,16 @@ export default function ChatView(props: ChatViewProps) {
   );
   const askAssistantText = useCallback(
     (citation: AssistantCitation) => {
-      const sourceRunId = sidechatRunForCitation(
+      const sourcePoint = sidechatSourcePointForCitation(
         citation,
         serverVisibleTurnItems,
         serverProjection?.runs ?? [],
       );
-      if (sourceRunId === null) {
+      if (sourcePoint === null) {
         toastManager.add({ type: "warning", title: "Wait for the response to finish" });
         return false;
       }
-      onAskAssistantText?.(citation, sourceRunId);
+      onAskAssistantText?.(citation, sourcePoint);
       return true;
     },
     [onAskAssistantText, serverProjection, serverVisibleTurnItems],
@@ -3858,11 +3862,17 @@ export default function ChatView(props: ChatViewProps) {
   const timelineVisibleTurnItems = useMemo(
     () =>
       embedded && serverThread?.sidechatSource
-        ? serverVisibleTurnItems.filter(
-            (row) => row.visibility === "local" && row.item.type !== "checkpoint",
+        ? sidechatVisibleTurnItems(
+            serverVisibleTurnItems,
+            serverProjection?.thread.historyOrigin === "v1_import",
           )
         : serverVisibleTurnItems,
-    [embedded, serverThread?.sidechatSource, serverVisibleTurnItems],
+    [
+      embedded,
+      serverThread?.sidechatSource,
+      serverProjection?.thread.historyOrigin,
+      serverVisibleTurnItems,
+    ],
   );
   const serverTimelineEntries = useMemo(() => {
     const previous = timelineProjectionRef.current;

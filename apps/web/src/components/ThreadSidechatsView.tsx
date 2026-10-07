@@ -1,4 +1,4 @@
-import type { AssistantCitation, RunId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type { AssistantCitation, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { CommandId } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -17,7 +17,7 @@ import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import ChatView from "./ChatView";
 import { Button } from "./ui/button";
 import { newThreadId } from "~/lib/utils";
-import { sameSidechatCitation } from "~/lib/sidechats";
+import { sameSidechatCitation, type SidechatSourcePoint } from "~/lib/sidechats";
 import { readThreadShell, waitForThreadShell } from "~/state/entities";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { threadEnvironment } from "~/state/threads";
@@ -36,7 +36,7 @@ const MainChatView = memo(ChatView);
 
 type SidechatSelection = {
   citation: AssistantCitation;
-  runId: RunId;
+  sourcePoint: SidechatSourcePoint;
   threadId: ThreadId;
   created: boolean;
 };
@@ -52,7 +52,7 @@ function SidechatPanel({
   keyboardActive: boolean;
   onCreated: (threadId: ThreadId) => void;
 }) {
-  const fork = useAtomCommand(threadEnvironment.forkFromRun, { reportFailure: false });
+  const fork = useAtomCommand(threadEnvironment.fork, { reportFailure: false });
   const [ready, setReady] = useState(selection.created);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -69,7 +69,7 @@ function SidechatPanel({
           commandId: CommandId.make(`sidechat:${selection.threadId}:fork`),
           sourceThreadId: parentRef.threadId,
           targetThreadId: selection.threadId,
-          runId: selection.runId,
+          sourcePoint: selection.sourcePoint,
           title: `Sidechat: ${selection.citation.text.replace(/\s+/g, " ").slice(0, 80)}`,
           sidechatSource: { parentThreadId: parentRef.threadId, citation: selection.citation },
         },
@@ -174,14 +174,13 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
   const openSidechat = useCallback(
     (threadId: ThreadId) => {
       const thread = readThreadShell(scopeThreadRef(parentRef.environmentId, threadId));
-      if (
-        thread?.sidechatSource?.parentThreadId !== parentRef.threadId ||
-        thread.forkedFrom?.type !== "run"
-      )
-        return;
+      if (thread?.sidechatSource?.parentThreadId !== parentRef.threadId) return;
       const selection: SidechatSelection = {
         citation: thread.sidechatSource.citation,
-        runId: thread.forkedFrom.runId,
+        sourcePoint:
+          thread.forkedFrom?.type === "run"
+            ? { type: "run", runId: thread.forkedFrom.runId }
+            : { type: "imported_message", messageId: thread.sidechatSource.citation.messageId },
         threadId,
         created: true,
       };
@@ -211,7 +210,7 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
   }, []);
 
   const ask = useCallback(
-    (citation: AssistantCitation, runId: RunId) => {
+    (citation: AssistantCitation, sourcePoint: SidechatSourcePoint) => {
       const existing = sidechats.find((sidechat) =>
         sameSidechatCitation(sidechat.citation, citation),
       );
@@ -225,7 +224,11 @@ export function ThreadSidechatsView(props: ComponentProps<typeof ChatView>) {
           current?.parentKey === parentKey &&
           sameSidechatCitation(current.selection.citation, citation)
             ? { ...current, open: true }
-            : { parentKey, open: true, selection: { citation, runId, threadId, created: false } },
+            : {
+                parentKey,
+                open: true,
+                selection: { citation, sourcePoint, threadId, created: false },
+              },
         );
         setActivePane("side");
       });

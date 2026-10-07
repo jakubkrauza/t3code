@@ -18,7 +18,7 @@ const state = vi.hoisted(() => ({
   wait: vi.fn(),
 }));
 vi.mock("~/state/threads", () => ({
-  threadEnvironment: { forkFromRun: "fork" },
+  threadEnvironment: { fork: "fork" },
 }));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => state.fork,
@@ -83,7 +83,10 @@ vi.mock("./ChatView", () => ({
     onAskAssistantText,
   }: {
     threadId: string;
-    onAskAssistantText?: (citation: AssistantCitation, runId: RunId) => void;
+    onAskAssistantText?: (
+      citation: AssistantCitation,
+      sourcePoint: { type: "run"; runId: RunId },
+    ) => void;
   }) => {
     useEffect(() => {
       state.mounts.set(threadId, (state.mounts.get(threadId) ?? 0) + 1);
@@ -91,7 +94,9 @@ vi.mock("./ChatView", () => ({
     return (
       <div data-chat-thread={threadId}>
         {onAskAssistantText ? (
-          <button onClick={() => onAskAssistantText(citation, runId)}>Select passage</button>
+          <button onClick={() => onAskAssistantText(citation, { type: "run", runId })}>
+            Select passage
+          </button>
         ) : (
           "Child conversation"
         )}
@@ -148,7 +153,7 @@ it("opens a fork in the regular chat view without sending or remounting the main
   await openDraft();
   expect(state.fork).toHaveBeenCalledTimes(1);
   const forkInput = state.fork.mock.calls[0]![0].input;
-  expect(forkInput.runId).toBe(runId);
+  expect(forkInput.sourcePoint).toEqual({ type: "run", runId });
   expect(forkInput.sidechatSource).toEqual({ parentThreadId: parentId, citation });
   expect(state.drafts.get(forkInput.targetThreadId)).toContain("[Assistant quote](");
   expect(
@@ -226,4 +231,22 @@ it("keeps the sidechat editor mounted through closing and reopening the panel", 
   expect(renderer.root.findByProps({ "data-chat-thread": "saved-child" })).toBe(child);
   expect(state.mounts.get("saved-child")).toBe(1);
   expect(state.mounts.get(parentId)).toBe(1);
+});
+
+it("reopens an imported-message sidechat after closing it without requiring a source run", async () => {
+  const childId = ThreadId.make("imported-child");
+  state.shells = [
+    { id: childId, sidechatSource: { parentThreadId: parentId, citation }, forkedFrom: null },
+  ];
+  await openDraft();
+  expect(state.fork).not.toHaveBeenCalled();
+  expect(renderer.root.findAllByProps({ "data-chat-thread": childId })).toHaveLength(1);
+  await act(async () => {
+    renderer.root.findByProps({ "aria-label": "Close sidechat" }).props.onClick();
+  });
+  await act(async () => {
+    renderer.root.findByProps({ children: "Select passage" }).props.onClick();
+  });
+  expect(state.fork).not.toHaveBeenCalled();
+  expect(state.mounts.get(childId)).toBe(1);
 });

@@ -42,6 +42,7 @@ import {
   createProject,
   dismissThreadUserInput,
   editQueuedRun,
+  forkThread,
   forkThreadFromRun,
   interruptThreadTurn,
   mergeThreadBack,
@@ -595,6 +596,12 @@ describe("V2 environment commands", () => {
           targetThreadId: ThreadId.make("thread-fork"),
           runId: RunId.make("run-1"),
         }).pipe(provide);
+        yield* forkThread({
+          commandId: CommandId.make("imported-fork"),
+          sourceThreadId: v2ThreadId,
+          targetThreadId: ThreadId.make("thread-imported-fork"),
+          sourcePoint: { type: "imported_message", messageId: MessageId.make("imported-response") },
+        }).pipe(provide);
         yield* mergeThreadBack({
           commandId: CommandId.make("merge"),
           sourceThreadId: ThreadId.make("thread-fork"),
@@ -645,6 +652,10 @@ describe("V2 environment commands", () => {
 
         expect(commands).toMatchObject([
           { type: "thread.fork", sourcePoint: { type: "run", runId: "run-1" } },
+          {
+            type: "thread.fork",
+            sourcePoint: { type: "imported_message", messageId: "imported-response" },
+          },
           { type: "thread.merge_back", sourcePoint: { type: "run", runId: "run-2" } },
           { type: "queued-run.reorder", runId: "run-3", beforeRunId: "run-4" },
           {

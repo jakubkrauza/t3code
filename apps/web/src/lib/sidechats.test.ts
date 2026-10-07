@@ -12,7 +12,12 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({ resolveRange: vi.fn() }));
 vi.mock("./assistantTextSelection", () => ({ resolveAssistantCitationRange: mocks.resolveRange }));
-import { observeSidechatAnchors, sameSidechatCitation, sidechatRunForCitation } from "./sidechats";
+import {
+  observeSidechatAnchors,
+  sameSidechatCitation,
+  sidechatSourcePointForCitation,
+  sidechatVisibleTurnItems,
+} from "./sidechats";
 
 const citation: AssistantCitation = {
   version: 1,
@@ -296,14 +301,29 @@ it("opens a sidechat from a history item without needing the bounded messages ar
   };
   if (item.item.type !== "assistant_message") throw new Error("Expected an assistant message");
   for (const status of ["completed", "waiting", "interrupted", "cancelled", "failed"] as const) {
-    expect(sidechatRunForCitation(citation, [item], [{ id: runId, status }])).toBe(runId);
+    expect(sidechatSourcePointForCitation(citation, [item], [{ id: runId, status }])).toEqual({
+      type: "run",
+      runId,
+    });
   }
-  expect(sidechatRunForCitation(citation, [item], [{ id: runId, status: "running" }])).toBeNull();
   expect(
-    sidechatRunForCitation(citation, [item], [{ id: runId, status: "rolled_back" }]),
+    sidechatSourcePointForCitation(
+      citation,
+      [{ ...item, item: { ...item.item, runId: null } }],
+      [],
+    ),
+  ).toEqual({ type: "imported_message", messageId: citation.messageId });
+  const imported = { ...item, item: { ...item.item, runId: null } };
+  expect(sidechatVisibleTurnItems([imported, item], true)).toEqual([item]);
+  expect(sidechatVisibleTurnItems([imported, item], false)).toEqual([imported, item]);
+  expect(
+    sidechatSourcePointForCitation(citation, [item], [{ id: runId, status: "running" }]),
   ).toBeNull();
   expect(
-    sidechatRunForCitation(
+    sidechatSourcePointForCitation(citation, [item], [{ id: runId, status: "rolled_back" }]),
+  ).toBeNull();
+  expect(
+    sidechatSourcePointForCitation(
       citation,
       [
         {
@@ -321,7 +341,7 @@ it("opens a sidechat from a history item without needing the bounded messages ar
     ),
   ).toBeNull();
   expect(
-    sidechatRunForCitation(
+    sidechatSourcePointForCitation(
       { ...citation, messageId: MessageId.make("other-message") },
       [item],
       [{ id: runId, status: "completed" }],

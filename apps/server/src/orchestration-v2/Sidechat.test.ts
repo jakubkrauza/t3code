@@ -15,6 +15,10 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Layer from "effect/Layer";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as Legacy from "./legacy/LegacyV1ThreadImporter.ts";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
@@ -283,4 +287,78 @@ it.effect(
       assert.equal(child.runs.find((item) => item.id === run.id)?.status, "cancelled");
       assert.isNotNull(child.thread.deletedAt);
     }).pipe(Effect.provide(layer)),
+);
+
+it.effect("forks an imported response with its preceding context and no later messages", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* seed;
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-10-07T12:00:00.000Z";
+    const parent = ThreadId.make("imported-parent");
+    const response = MessageId.make("imported-answer");
+    yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
+      VALUES (${parent}, 'sidechat-project', 'Imported', '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default', ${now}, ${now})`;
+    const messages = [
+      { id: "imported-question", role: "user", text: "The app is Fridge Roulette." },
+      { id: response, role: "assistant", text: "Use a fork." },
+      { id: "later-question", role: "user", text: "LATER_CONTEXT_MUST_NOT_LEAK" },
+      { id: "later-answer", role: "assistant", text: "Later answer." },
+    ];
+    for (const [index, message] of messages.entries()) {
+      const time = `2026-10-07T12:00:0${index}.000Z`;
+      yield* sql`INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
+        VALUES (${message.id}, ${parent}, ${message.role}, ${message.text}, 0, ${time}, ${time})`;
+    }
+    const legacy = yield* Legacy.LegacyV1ThreadImporter;
+    yield* legacy.reconcileShells;
+    yield* legacy.ensureTranscript(parent);
+    const quote = { ...citation, threadId: parent, messageId: response };
+    const command = {
+      ...forkCommand(quote),
+      sourceThreadId: parent,
+      sourcePoint: { type: "imported_message" as const, messageId: response },
+      sidechatSource: { parentThreadId: parent, citation: quote },
+    };
+    const result = yield* orchestrator.dispatch(command);
+    assert.equal((yield* orchestrator.dispatch(command)).sequence, result.sequence);
+    const detail = yield* orchestrator.getThreadProjection(targetThreadId);
+    assert.deepEqual(
+      detail.messages.map((message) => message.text),
+      messages.slice(0, 2).map((message) => message.text),
+    );
+    assert.deepEqual(detail.thread.sidechatSource, command.sidechatSource);
+    assert.equal(detail.thread.runtimeMode, "approval-required");
+    assert.equal(detail.thread.historyOrigin, "v1_import");
+    assert.lengthOf((yield* orchestrator.getThreadProjection(parent)).messages, 4);
+    assert.lengthOf((yield* orchestrator.getThreadProjection(parent)).runs, 0);
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("ask-imported-sidechat"),
+      threadId: targetThreadId,
+      messageId: MessageId.make("sidechat-question"),
+      text: "Which app are we discussing?",
+      dispatchMode: { type: "start_immediately" },
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const started = yield* orchestrator.getThreadProjection(targetThreadId);
+    assert.lengthOf(started.contextHandoffs, 1);
+    assert.include(started.contextHandoffs[0]!.summaryText, "Fridge Roulette");
+    assert.include(started.contextHandoffs[0]!.summaryText, "Use a fork.");
+    assert.notInclude(started.contextHandoffs[0]!.summaryText, "LATER_CONTEXT_MUST_NOT_LEAK");
+    const invalid = yield* orchestrator
+      .dispatch({
+        ...command,
+        commandId: CommandId.make("invalid-imported-citation"),
+        targetThreadId: ThreadId.make("invalid-child"),
+        sourcePoint: { type: "imported_message", messageId: MessageId.make("later-question") },
+      })
+      .pipe(Effect.flip);
+    assert.equal(invalid._tag, "OrchestratorDispatchError");
+    assert.isNull(yield* orchestrator.getThreadShell(ThreadId.make("invalid-child")));
+  }).pipe(
+    Effect.provide(Legacy.layer),
+    Effect.provide(Layer.mergeAll(layer, SqlitePersistenceMemory)),
+  ),
 );

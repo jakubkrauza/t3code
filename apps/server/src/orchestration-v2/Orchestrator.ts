@@ -566,6 +566,8 @@ function runForSourcePoint(
   >["sourcePoint"],
 ): OrchestrationV2Run | null {
   switch (sourcePoint.type) {
+    case "imported_message":
+      return null;
     case "latest_stable":
       return latestStableRun(projection);
     case "run":
@@ -3407,6 +3409,69 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: "Cannot fork a deleted thread.",
       });
+    }
+    if (command.sourcePoint.type === "imported_message") {
+      if (command.sidechatSource?.citation.messageId !== command.sourcePoint.messageId) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "An imported-message fork must include its sidechat citation.",
+        });
+      }
+      const now = command.createdAt ?? (yield* DateTime.now);
+      const { targetThread, items } = yield* threadForkService
+        .planImportedSidechat({
+          sourceProjection: {
+            thread: sourceProjection.thread,
+            turnItems: yield* readHandoffItems(command.sourceThreadId, [null]),
+          },
+          targetThreadId: command.targetThreadId,
+          sidechatSource: command.sidechatSource,
+          ...(command.title === undefined ? {} : { title: command.title }),
+          createdBy: command.createdBy,
+          creationSource: command.creationSource,
+          createdAt: now,
+        })
+        .pipe(mapDispatchError(command));
+      yield* runtimePolicy
+        .resolve({ thread: targetThread, modelSelection: targetThread.modelSelection })
+        .pipe(mapDispatchError(command));
+      const emitEvent = emit(events, command);
+      yield* emitEvent({
+        type: "thread.created",
+        threadId: targetThread.id,
+        occurredAt: now,
+        payload: targetThread,
+      });
+      for (const item of items) {
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: targetThread.id,
+          occurredAt: now,
+          payload: item,
+        });
+        yield* emitEvent({
+          type: "message.updated",
+          threadId: targetThread.id,
+          occurredAt: now,
+          payload: {
+            id: item.messageId,
+            threadId: targetThread.id,
+            runId: null,
+            nodeId: null,
+            createdBy: item.type === "user_message" ? item.createdBy : "agent",
+            creationSource: item.type === "user_message" ? item.creationSource : "server",
+            role: item.type === "user_message" ? "user" : "assistant",
+            text: item.text,
+            ...("context" in item && item.context !== undefined ? { context: item.context } : {}),
+            attachments: item.type === "user_message" ? item.attachments : [],
+            streaming: false,
+            createdAt: item.startedAt ?? item.updatedAt,
+            updatedAt: item.updatedAt,
+          },
+        });
+      }
+      return;
     }
     const sourceRun = runForSourcePoint(sourceProjection, command.sourcePoint);
 

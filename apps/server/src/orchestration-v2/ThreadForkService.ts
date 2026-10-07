@@ -9,6 +9,9 @@ import {
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   ThreadId,
+  TurnItemId,
+  MessageId,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -54,6 +57,23 @@ export function forkableSourceRunStatusError(
 }
 
 export interface ThreadForkServiceV2Shape {
+  readonly planImportedSidechat: (input: {
+    readonly sourceProjection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems">;
+    readonly targetThreadId: ThreadId;
+    readonly title?: string;
+    readonly sidechatSource: NonNullable<OrchestrationV2AppThread["sidechatSource"]>;
+    readonly createdBy: OrchestrationV2Actor;
+    readonly creationSource: OrchestrationV2CreationSource;
+    readonly createdAt: DateTime.Utc;
+  }) => Effect.Effect<
+    {
+      readonly targetThread: OrchestrationV2AppThread;
+      readonly items: ReadonlyArray<
+        Extract<OrchestrationV2TurnItem, { type: "user_message" | "assistant_message" }>
+      >;
+    },
+    ThreadForkPlanError
+  >;
   readonly plan: (input: {
     readonly sourceProjection: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly sourceRun: OrchestrationV2Run;
@@ -77,6 +97,76 @@ export class ThreadForkServiceV2 extends Context.Service<
 export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
   ThreadForkServiceV2,
   ThreadForkServiceV2.of({
+    planImportedSidechat: (input) =>
+      Effect.gen(function* () {
+        const source = input.sourceProjection.thread;
+        const citation = input.sidechatSource.citation;
+        const items = input.sourceProjection.turnItems
+          .filter(
+            (
+              item,
+            ): item is Extract<
+              OrchestrationV2TurnItem,
+              { type: "user_message" | "assistant_message" }
+            > =>
+              item.runId === null &&
+              (item.type === "user_message" || item.type === "assistant_message"),
+          )
+          .toSorted((left, right) => left.ordinal - right.ordinal);
+        const boundary = items.find((item) => item.messageId === citation.messageId);
+        if (
+          source.historyOrigin !== "v1_import" ||
+          input.sidechatSource.parentThreadId !== source.id ||
+          citation.threadId !== source.id ||
+          boundary?.type !== "assistant_message" ||
+          boundary.streaming ||
+          (boundary.status !== "completed" && boundary.status !== "interrupted")
+        ) {
+          return yield* new ThreadForkPlanError({
+            sourceThreadId: source.id,
+            targetThreadId: input.targetThreadId,
+            cause: "The sidechat must cite a finished imported assistant message.",
+          });
+        }
+        const targetThread: OrchestrationV2AppThread = {
+          ...source,
+          createdBy: input.createdBy,
+          creationSource: input.creationSource,
+          id: input.targetThreadId,
+          title: input.title ?? `${source.title} sidechat`,
+          activeProviderThreadId: null,
+          sidechatSource: input.sidechatSource,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          lineage: {
+            parentThreadId: source.id,
+            relationshipToParent: "fork",
+            rootThreadId: source.lineage.rootThreadId,
+          },
+          forkedFrom: null,
+          createdAt: input.createdAt,
+          updatedAt: input.createdAt,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          snoozedUntil: null,
+          snoozedAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        };
+        return {
+          targetThread,
+          // Keep the imported origin so the existing first-turn handoff supplies this history.
+          items: items
+            .filter((item) => item.ordinal <= boundary.ordinal)
+            .map((item) => ({
+              ...item,
+              id: TurnItemId.make(`sidechat:${input.targetThreadId}:${item.id}`),
+              messageId: MessageId.make(`sidechat:${input.targetThreadId}:${item.messageId}`),
+              threadId: input.targetThreadId,
+            })),
+        };
+      }),
     plan: (input) =>
       Effect.gen(function* () {
         if (!isForkableSourceRunStatus(input.sourceRun.status)) {

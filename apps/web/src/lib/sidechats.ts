@@ -1,5 +1,6 @@
 import type {
   AssistantCitation,
+  OrchestrationV2Command,
   ThreadId,
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2Run,
@@ -14,11 +15,16 @@ export type SidechatAnchor = {
 };
 
 /** History pages contain timeline items, not the bounded conversation message array. */
-export function sidechatRunForCitation(
+export type SidechatSourcePoint = Extract<
+  OrchestrationV2Command,
+  { type: "thread.fork" }
+>["sourcePoint"];
+
+export function sidechatSourcePointForCitation(
   citation: AssistantCitation,
   items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">>,
-) {
+): SidechatSourcePoint | null {
   const message = items.find(
     (row) =>
       row.sourceThreadId === citation.threadId &&
@@ -26,10 +32,32 @@ export function sidechatRunForCitation(
       row.item.messageId === citation.messageId,
   )?.item;
   if (message?.type !== "assistant_message" || message.streaming) return null;
+  if (message.runId === null) {
+    return message.status === "completed" || message.status === "interrupted"
+      ? { type: "imported_message", messageId: message.messageId }
+      : null;
+  }
   const run = runs.find((candidate) => candidate.id === message.runId);
   return run && ["completed", "waiting", "failed", "interrupted", "cancelled"].includes(run.status)
-    ? run.id
+    ? { type: "run", runId: run.id }
     : null;
+}
+
+/** Imported transcript copies supply context, while the panel shows its own exchanges. */
+export function sidechatVisibleTurnItems(
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  imported: boolean,
+) {
+  return items.filter(
+    ({ visibility, item }) =>
+      visibility === "local" &&
+      item.type !== "checkpoint" &&
+      !(
+        imported &&
+        item.runId === null &&
+        (item.type === "user_message" || item.type === "assistant_message")
+      ),
+  );
 }
 
 function sidechatColorIndex(threadId: ThreadId): number {
