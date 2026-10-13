@@ -191,6 +191,7 @@ import { PierreEntryIcon } from "./PierreEntryIcon";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import type { SidechatAnchor } from "~/lib/sidechats";
 import {
   AssistantCitationSource,
   type AssistantCitationRequest,
@@ -313,6 +314,8 @@ import {
 // ---------------------------------------------------------------------------
 
 interface TimelineRowSharedState {
+  sidechats: ReadonlyArray<SidechatAnchor>;
+  onOpenSidechat: ((threadId: ThreadId) => void) | undefined;
   citationRequest: AssistantCitationTarget | null;
   listRef: React.RefObject<LegendListRef | null>;
   timestampFormat: TimestampFormat;
@@ -428,6 +431,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
     layout: true,
   },
 } as const satisfies MaintainScrollAtEndOptions;
+const EMPTY_SIDECHATS: ReadonlyArray<SidechatAnchor> = [];
 const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
 // Streamed text lands a paragraph at a time. A smooth scroll to the end
@@ -450,6 +454,9 @@ export interface MessagesTimelineHistoryControls {
 }
 
 interface MessagesTimelineProps {
+  onAskAssistantText?: ((citation: AssistantCitation) => boolean) | undefined;
+  sidechats?: ReadonlyArray<SidechatAnchor> | undefined;
+  onOpenSidechat?: ((threadId: ThreadId) => void) | undefined;
   citationRequest?: AssistantCitationRequest | null;
   citationHistoryLoading?: boolean;
   onCiteAssistantText?: (
@@ -572,6 +579,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
+  onAskAssistantText,
+  sidechats = EMPTY_SIDECHATS,
+  onOpenSidechat,
   isWorking,
   runlessWorkActive = false,
   activeTurnInProgress,
@@ -1349,6 +1359,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
+      sidechats,
+      onOpenSidechat,
       citationRequest: readyCitationRequest,
       listRef,
       timestampFormat,
@@ -1388,6 +1400,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       workGroupViewState,
     }),
     [
+      sidechats,
+      onOpenSidechat,
       readyCitationRequest,
       listRef,
       timestampFormat,
@@ -1637,6 +1651,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 viewport={timelineViewportElement}
                 threadRef={citationThreadRef}
                 onCite={onCiteAssistantText}
+                onAsk={onAskAssistantText}
               />
             ) : null}
             <LegendList<MessagesTimelineRow>
@@ -2841,6 +2856,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         <div data-thread-find-text="true">
           <AssistantCitationSource
             messageId={row.message.id}
+            sidechats={ctx.sidechats}
+            onOpenSidechat={ctx.onOpenSidechat}
             {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
             itemKey={row.id}
             request={ctx.citationRequest}

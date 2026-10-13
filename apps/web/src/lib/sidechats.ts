@@ -1,0 +1,184 @@
+import type {
+  AssistantCitation,
+  OrchestrationV2Command,
+  ThreadId,
+  OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2Run,
+} from "@t3tools/contracts";
+import { resolveAssistantCitationRange } from "./assistantTextSelection";
+
+export type SidechatAnchor = {
+  threadId: ThreadId;
+  citation: AssistantCitation;
+  active?: boolean;
+  working?: boolean;
+};
+
+/** History pages contain timeline items, not the bounded conversation message array. */
+export type SidechatSourcePoint = Extract<
+  OrchestrationV2Command,
+  { type: "thread.fork" }
+>["sourcePoint"];
+
+export function sidechatSourcePointForCitation(
+  citation: AssistantCitation,
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">>,
+): SidechatSourcePoint | null {
+  const message = items.find(
+    (row) =>
+      row.sourceThreadId === citation.threadId &&
+      row.item.type === "assistant_message" &&
+      row.item.messageId === citation.messageId,
+  )?.item;
+  if (message?.type !== "assistant_message" || message.streaming) return null;
+  if (message.runId === null) {
+    return message.status === "completed" || message.status === "interrupted"
+      ? { type: "imported_message", messageId: message.messageId }
+      : null;
+  }
+  const run = runs.find((candidate) => candidate.id === message.runId);
+  return run && ["completed", "waiting", "failed", "interrupted", "cancelled"].includes(run.status)
+    ? { type: "run", runId: run.id }
+    : null;
+}
+
+/** Imported transcript copies supply context, while the panel shows its own exchanges. */
+export function sidechatVisibleTurnItems(
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  imported: boolean,
+) {
+  return items.filter(
+    ({ visibility, item }) =>
+      visibility === "local" &&
+      item.type !== "checkpoint" &&
+      !(
+        imported &&
+        item.runId === null &&
+        (item.type === "user_message" || item.type === "assistant_message")
+      ),
+  );
+}
+
+function sidechatColorIndex(threadId: ThreadId): number {
+  // Match chat-ux: spread UUIDs across eight colors without changing them on reload.
+  let hash = 0;
+  for (const character of threadId) hash = (hash * 31 + character.charCodeAt(0)) | 0;
+  return (hash >>> 0) % 8;
+}
+
+export function sameSidechatCitation(left: AssistantCitation, right: AssistantCitation): boolean {
+  return (
+    left.environmentId === right.environmentId &&
+    left.threadId === right.threadId &&
+    left.messageId === right.messageId &&
+    left.start === right.start &&
+    left.end === right.end &&
+    left.text === right.text
+  );
+}
+
+/** Highlight DOM ranges without changing the Markdown or the user's native selection. */
+export function observeSidechatAnchors(
+  root: HTMLElement,
+  anchors: ReadonlyArray<SidechatAnchor>,
+  onOpen: (threadId: ThreadId) => void,
+) {
+  const registry = typeof CSS !== "undefined" ? CSS.highlights : undefined;
+  let ranges: Array<{
+    threadId: ThreadId;
+    range: Range;
+    highlight: Highlight | null;
+    name: string;
+  }> = [];
+  const clear = () => {
+    for (const { range, highlight, name } of ranges) {
+      highlight?.delete(range);
+      if (highlight?.size === 0 && registry?.get(name) === highlight) registry.delete(name);
+    }
+    ranges = [];
+  };
+  const update = () => {
+    clear();
+    for (const { threadId, citation, active, working } of anchors) {
+      const range = resolveAssistantCitationRange(root, citation);
+      if (!range) continue;
+      const color = sidechatColorIndex(threadId);
+      const name = `t3-sidechat-${color}${active ? "-active" : ""}${working ? "-working" : ""}`;
+      let highlight: Highlight | null = null;
+      if (registry && typeof Highlight !== "undefined") {
+        highlight = registry.get(name) ?? new Highlight();
+        highlight.add(range);
+        registry.set(name, highlight);
+      }
+      ranges.push({ threadId, range, highlight, name });
+    }
+  };
+  const originalCursor = root.style.cursor;
+  const hitTest = (event: MouseEvent) => {
+    if ((event.target as Element).closest("a, button, [role=button]")) return undefined;
+    return ranges.find(({ range }) =>
+      Array.from(range.getClientRects()).some(
+        (rect) =>
+          event.clientX >= rect.left &&
+          event.clientX <= rect.right &&
+          event.clientY >= rect.top &&
+          event.clientY <= rect.bottom,
+      ),
+    );
+  };
+  let hovered = false;
+  const move = (event: MouseEvent) => {
+    const next = hitTest(event) !== undefined;
+    if (next === hovered) return;
+    hovered = next;
+    root.toggleAttribute("data-sidechat-hovered", hovered);
+    root.style.cursor = hovered ? "pointer" : originalCursor;
+  };
+  const leave = () => {
+    hovered = false;
+    root.removeAttribute("data-sidechat-hovered");
+    root.style.cursor = originalCursor;
+  };
+  const click = (event: MouseEvent) => {
+    if (root.ownerDocument.getSelection()?.toString()) return;
+    const match = hitTest(event);
+    if (match) onOpen(match.threadId);
+  };
+  update();
+  const reducedMotion = root.ownerDocument.defaultView?.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  );
+  let pulse: Animation | undefined;
+  const updatePulse = () => {
+    pulse?.cancel();
+    pulse = undefined;
+    if (reducedMotion?.matches || !anchors.some((anchor) => anchor.working)) return;
+    pulse = root.animate(
+      [
+        { "--sidechat-pulse-opacity": 1 },
+        { "--sidechat-pulse-opacity": 0.4 },
+        { "--sidechat-pulse-opacity": 1 },
+      ],
+      { duration: 1600, iterations: Infinity, easing: "ease-in-out" },
+    );
+    pulse.id = "t3-sidechat-pulse";
+  };
+  updatePulse();
+  reducedMotion?.addEventListener("change", updatePulse);
+  const observer = new MutationObserver(update);
+  observer.observe(root, { childList: true, characterData: true, subtree: true });
+  root.addEventListener("click", click);
+  root.addEventListener("pointermove", move, { passive: true });
+  root.addEventListener("pointerleave", leave);
+  return () => {
+    pulse?.cancel();
+    reducedMotion?.removeEventListener("change", updatePulse);
+    observer.disconnect();
+    root.removeEventListener("click", click);
+    root.removeEventListener("pointermove", move);
+    root.removeEventListener("pointerleave", leave);
+    leave();
+    clear();
+  };
+}

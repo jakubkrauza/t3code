@@ -237,13 +237,13 @@ it.effect("retries a partial project deletion without repeating child events or 
           finalCleanup.filter((effect) => effect.thread_id === threadId),
           [
             {
-              effect_id: `effect:${expectedCommandId}:preview.cleanup`,
+              effect_id: `effect:${expectedCommandId}:preview.cleanup:${threadId}`,
               thread_id: threadId,
               command_id: expectedCommandId,
               effect_type: "preview.cleanup",
             },
             {
-              effect_id: `effect:${expectedCommandId}:terminal.cleanup`,
+              effect_id: `effect:${expectedCommandId}:terminal.cleanup:${threadId}`,
               thread_id: threadId,
               command_id: expectedCommandId,
               effect_type: "terminal.cleanup",

@@ -630,6 +630,8 @@ function runForSourcePoint(
   >["sourcePoint"],
 ): OrchestrationV2Run | null {
   switch (sourcePoint.type) {
+    case "imported_message":
+      return null;
     case "latest_stable":
       return latestStableRun(projection);
     case "run":
@@ -2455,6 +2457,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (
+      thread.sidechatSource &&
+      ((command.type === "thread.runtime-mode.set" &&
+        command.runtimeMode !== "approval-required") ||
+        (command.type === "thread.interaction-mode.set" && command.interactionMode !== "default"))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Sidechats are read-only discussions.",
+      });
+    }
+    if (
       command.type === "thread.pull-request.watch" &&
       command.watching &&
       isProviderNativeSubagentThread(thread)
@@ -3553,14 +3567,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
     const sourceProjection = yield* projectionStore
-      .getThreadRecords(command.sourceThreadId, [
-        "runs",
-        "checkpoints",
-        "providerThreads",
-        "providerTurns",
-        "attempts",
-        "contextTransfers",
-      ])
+      .getThreadRecords(
+        command.sourceThreadId,
+        [
+          "runs",
+          ...(command.sidechatSource === undefined ? [] : ["messages" as const]),
+          "checkpoints",
+          "providerThreads",
+          "providerTurns",
+          "attempts",
+          "contextTransfers",
+        ],
+        command.sidechatSource === undefined
+          ? undefined
+          : { messageIds: [command.sidechatSource.citation.messageId] },
+      )
       .pipe(
         Effect.mapError(
           (cause) =>
@@ -3574,6 +3595,76 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // command copies, not an earlier read the source's user could outrun.
     yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, sourceProjection.thread);
 
+    if (sourceProjection.thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Cannot fork a deleted thread.",
+      });
+    }
+    if (command.sourcePoint.type === "imported_message") {
+      if (command.sidechatSource?.citation.messageId !== command.sourcePoint.messageId) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "An imported-message fork must include its sidechat citation.",
+        });
+      }
+      const now = command.createdAt ?? (yield* DateTime.now);
+      const { targetThread, items } = yield* threadForkService
+        .planImportedSidechat({
+          sourceProjection: {
+            thread: sourceProjection.thread,
+            turnItems: yield* readHandoffItems(command.sourceThreadId, [null]),
+          },
+          targetThreadId: command.targetThreadId,
+          sidechatSource: command.sidechatSource,
+          ...(command.title === undefined ? {} : { title: command.title }),
+          createdBy: command.createdBy,
+          creationSource: command.creationSource,
+          createdAt: now,
+        })
+        .pipe(mapDispatchError(command));
+      yield* runtimePolicy
+        .resolve({ thread: targetThread, modelSelection: targetThread.modelSelection })
+        .pipe(mapDispatchError(command));
+      const emitEvent = emit(events, command);
+      yield* emitEvent({
+        type: "thread.created",
+        threadId: targetThread.id,
+        occurredAt: now,
+        payload: targetThread,
+      });
+      for (const item of items) {
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: targetThread.id,
+          occurredAt: now,
+          payload: item,
+        });
+        yield* emitEvent({
+          type: "message.updated",
+          threadId: targetThread.id,
+          occurredAt: now,
+          payload: {
+            id: item.messageId,
+            threadId: targetThread.id,
+            runId: null,
+            nodeId: null,
+            createdBy: item.type === "user_message" ? item.createdBy : "agent",
+            creationSource: item.type === "user_message" ? item.creationSource : "server",
+            role: item.type === "user_message" ? "user" : "assistant",
+            text: item.text,
+            ...("context" in item && item.context !== undefined ? { context: item.context } : {}),
+            attachments: item.type === "user_message" ? item.attachments : [],
+            streaming: false,
+            createdAt: item.startedAt ?? item.updatedAt,
+            updatedAt: item.updatedAt,
+          },
+        });
+      }
+      return;
+    }
     const sourceRun = runForSourcePoint(sourceProjection, command.sourcePoint);
 
     if (sourceRun === null) {
@@ -3589,6 +3680,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: forkableSourceRunStatusError(sourceRun),
       });
+    }
+    const sidechatSource = command.sidechatSource;
+    if (sidechatSource !== undefined) {
+      const message = sourceProjection.messages.find(
+        (candidate) => candidate.id === sidechatSource.citation.messageId,
+      );
+      if (message?.role !== "assistant" || message.runId !== sourceRun.id || message.streaming) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The sidechat must cite a completed assistant message from the fork source run.",
+        });
+      }
     }
     const sourceProviderThread = providerThreadForRun(sourceProjection, sourceRun);
     const now = command.createdAt ?? (yield* DateTime.now);
@@ -3609,11 +3713,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         transferId,
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
+        ...(command.sidechatSource === undefined ? {} : { sidechatSource: command.sidechatSource }),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         createdAt: now,
       })
       .pipe(mapDispatchError(command));
+
+    if (command.sidechatSource) {
+      yield* runtimePolicy
+        .resolve({ thread: targetThread, modelSelection: targetThread.modelSelection })
+        .pipe(mapDispatchError(command));
+    }
 
     yield* emitEvent({
       type: "thread.created",
@@ -10721,17 +10832,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
-        return yield* mapDispatchError(command)(
-          planThreadDeletion({
-            command,
-            projection,
+        const threadIds = new Set([command.threadId]);
+        const now = yield* DateTime.now;
+        for (const threadId of threadIds) {
+          for (const childId of yield* projectionStore
+            .getSidechatThreadIds(threadId)
+            .pipe(mapDispatchError(command)))
+            threadIds.add(childId);
+          const target =
+            threadId === command.threadId
+              ? projection
+              : yield* projectionStore
+                  .getThreadRecords(threadId, [
+                    "runs",
+                    "attempts",
+                    "nodes",
+                    "runtimeRequests",
+                    "subagents",
+                    "providerSessions",
+                  ])
+                  .pipe(mapDispatchError(command));
+          const plan = yield* planThreadDeletion({
+            command: { ...command, threadId },
+            projection: target,
             attachmentIds: yield* projectionStore
-              .getThreadAttachmentIds(command.threadId)
+              .getThreadAttachmentIds(threadId)
               .pipe(mapDispatchError(command)),
-            now: yield* DateTime.now,
+            now,
             idAllocator,
-          }),
-        );
+          }).pipe(mapDispatchError(command));
+          yield* Ref.update(events, (current) => [...current, ...plan.events]);
+          yield* Ref.update(effects, (current) => [...current, ...plan.effects]);
+        }
+        break;
       }
       case "thread.archive":
       case "thread.unarchive":

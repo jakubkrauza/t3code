@@ -215,11 +215,16 @@ export interface RevertThreadCheckpointInput extends ThreadCommandInput {
 
 export type StopThreadSessionInput = ThreadCommandInput;
 
-export interface ForkThreadFromRunInput extends CommandMetadata {
+export interface ForkThreadInput extends CommandMetadata {
   readonly sourceThreadId: ThreadId;
   readonly targetThreadId: ThreadId;
-  readonly runId: RunId;
+  readonly sourcePoint: Extract<OrchestrationV2Command, { type: "thread.fork" }>["sourcePoint"];
   readonly title?: string;
+  readonly sidechatSource?: import("@t3tools/contracts").OrchestrationV2AppThread["sidechatSource"];
+}
+
+export interface ForkThreadFromRunInput extends Omit<ForkThreadInput, "sourcePoint"> {
+  readonly runId: RunId;
 }
 
 export interface MergeThreadBackInput extends CommandMetadata {
@@ -951,8 +956,8 @@ export const stopThreadSession = Effect.fn("EnvironmentCommands.stopThreadSessio
   return result;
 });
 
-export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRun")(function* (
-  input: ForkThreadFromRunInput,
+export const forkThread = Effect.fn("EnvironmentCommands.forkThread")(function* (
+  input: ForkThreadInput,
 ) {
   return yield* dispatch({
     type: "thread.fork",
@@ -961,10 +966,14 @@ export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRu
     creationSource: input.creationSource ?? "web",
     sourceThreadId: input.sourceThreadId,
     targetThreadId: input.targetThreadId,
-    sourcePoint: { type: "run", runId: input.runId },
+    sourcePoint: input.sourcePoint,
+    ...(input.sidechatSource === undefined ? {} : { sidechatSource: input.sidechatSource }),
     ...(input.title === undefined ? {} : { title: input.title }),
   });
 });
+
+export const forkThreadFromRun = (input: ForkThreadFromRunInput) =>
+  forkThread({ ...input, sourcePoint: { type: "run", runId: input.runId } });
 
 export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(function* (
   input: MergeThreadBackInput,

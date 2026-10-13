@@ -4326,6 +4326,11 @@ function runBackgroundItemScenario(
   key: string,
   makeEvents: (ids: BackgroundScenarioIds) => ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
   options?: {
+    readonly sidechat?: boolean;
+    readonly onBaseline?: () => Effect.Effect<void>;
+    readonly onFinalization?: (
+      input: Parameters<EventSink.EventSinkV2["Service"]["writeWithEffects"]>[0],
+    ) => Effect.Effect<void>;
     readonly keepEventStreamOpen?: boolean;
     readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
@@ -4342,11 +4347,14 @@ function runBackgroundItemScenario(
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,
-          Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
+          Layer.mock(CheckpointService.CheckpointServiceV2)({
+            captureBaseline: () => options?.onBaseline?.() ?? Effect.void,
+          }),
           Layer.mock(EventSink.EventSinkV2)({
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Effect.gen(function* () {
+                yield* options?.onFinalization?.(input) ?? Effect.void;
                 if (
                   input.events.some(
                     (event) => event.type === "run.updated" && event.runId === ids.runId,
@@ -4387,7 +4395,12 @@ function runBackgroundItemScenario(
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:${key}`),
-        appThread: { id: ids.threadId } as OrchestrationV2AppThread,
+        appThread: {
+          id: ids.threadId,
+          ...(options?.sidechat
+            ? { sidechatSource: { parentThreadId: ThreadId.make("parent") } }
+            : {}),
+        } as OrchestrationV2AppThread,
         providerSessionId: ProviderSessionId.make(`session:${key}`),
         session: {
           events: Stream.empty,
@@ -4478,4 +4491,34 @@ it.effect("releases ingestion after idle subagent rows and items settle", () =>
       "root-finalized",
     ]);
   }),
+);
+
+it.effect(
+  "finishes sidechat turns without reading the Git workspace or enqueuing checkpoints",
+  () =>
+    Effect.gen(function* () {
+      const baselineCount = yield* Ref.make(0);
+      const finalized = yield* Deferred.make<void>();
+      yield* runBackgroundItemScenario(
+        "sidechat-read-only",
+        (ids) => [rootTerminalEvent(ids, "completed")],
+        {
+          sidechat: true,
+          onBaseline: () => Ref.update(baselineCount, (count) => count + 1),
+          onFinalization: (input) =>
+            Effect.gen(function* () {
+              assert.isFalse(
+                input.effects?.some((effect) => effect.request.type === "checkpoint.capture") ??
+                  false,
+              );
+              const run = input.events.find((event) => event.type === "run.updated");
+              assert.equal(run?.payload.status, "completed");
+              assert.isNotNull(run?.payload.completedAt);
+              yield* Deferred.succeed(finalized, undefined);
+            }),
+        },
+      );
+      yield* Deferred.await(finalized);
+      assert.equal(yield* Ref.get(baselineCount), 0);
+    }),
 );

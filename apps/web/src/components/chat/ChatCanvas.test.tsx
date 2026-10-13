@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { ChatCanvas } from "./ChatCanvas";
 import { useChatCanvas } from "./ChatCanvasContext";
+import { resolveThreadDetailsCardLayout } from "./threadDetailsCardLayout";
 
 const resize = vi.hoisted(() => ({ callbacks: new Set<() => void>() }));
 vi.mock("../../lib/observeResize", () => ({
@@ -17,6 +18,7 @@ vi.mock("../../lib/observeResize", () => ({
 let root: Root;
 let container: HTMLDivElement;
 let fontSize = 16;
+let width = 1800;
 let canvas: ReturnType<typeof useChatCanvas>;
 
 function Preview({ x }: { x: number }) {
@@ -37,10 +39,29 @@ function Preview({ x }: { x: number }) {
   return null;
 }
 
+function DetailsCard() {
+  const current = useChatCanvas()!;
+  const placement = resolveThreadDetailsCardLayout({
+    container: current.container,
+    lane: current.lane,
+    frame: null,
+  });
+  const left = placement?.x;
+  const right = placement ? placement.x + placement.width : undefined;
+  const reportDetailsCard = current.reportDetailsCard;
+  useLayoutEffect(() => {
+    reportDetailsCard(
+      left !== undefined && right !== undefined ? { left, right, bottom: 250 } : null,
+    );
+  }, [reportDetailsCard, left, right]);
+  return null;
+}
+
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   fontSize = 16;
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1800);
+  width = 1800;
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(() => width);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
     this: HTMLElement,
@@ -116,4 +137,41 @@ it("remeasures the open bar when its font size changes without resizing the canv
   });
   expect(canvas?.detailsCardTopInset).toBe(72);
   expect(canvas?.layout.frame?.y).toBe(84);
+});
+
+async function renderDetailsCard(revision = 0) {
+  await act(() =>
+    root.render(
+      <ChatCanvas composerOverlayElement={null} layoutKey={revision}>
+        <DetailsCard />
+      </ChatCanvas>,
+    ),
+  );
+}
+
+function laneInset() {
+  return container
+    .querySelector<HTMLElement>("[data-chat-canvas]")!
+    .style.getPropertyValue("--chat-lane-inset-end");
+}
+
+it("removes the workspace card inset during the parent commit that opens a narrow side panel", async () => {
+  width = 1280;
+  await renderDetailsCard();
+  expect(Number.parseFloat(laneInset())).toBeGreaterThan(0);
+  width = 600;
+  await renderDetailsCard(1);
+  // No resize delivery yet: the first paint must already use the new lane.
+  expect(laneInset()).toBe("0px");
+  width = 1280;
+  await renderDetailsCard(2);
+  expect(Number.parseFloat(laneInset())).toBeGreaterThan(0);
+});
+
+it("does not remeasure unchanged geometry when message content renders again", async () => {
+  await renderDetailsCard();
+  const measure = vi.mocked(window.getComputedStyle);
+  measure.mockClear();
+  await renderDetailsCard();
+  expect(measure).not.toHaveBeenCalled();
 });

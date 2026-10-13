@@ -32,6 +32,8 @@ interface PreviewPanelShellProps {
   maximized?: boolean;
   inlineSize?: PreviewPanelInlineSize;
   open?: boolean;
+  /** Disable width animation when the caller animates a settled layout instead. */
+  animate?: boolean;
   /**
    * Overrides the localStorage key used to persist the panel width. Callers
    * embedding this shell for a different surface (e.g. the pull requests
@@ -71,6 +73,7 @@ function PreviewPanelShellFrame(
   const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
   const isInline = props.mode === "inline";
   const collapsible = isInline && props.open !== undefined;
+  const animateWidth = collapsible && props.animate !== false;
   const open = props.open ?? true;
   const maximized = props.maximized ?? false;
   const localHostRef = useRef<HTMLDivElement | null>(null);
@@ -94,7 +97,7 @@ function PreviewPanelShellFrame(
       width,
       maximized,
       suppressed:
-        collapsible &&
+        animateWidth &&
         layoutTransition.open === open &&
         (layoutTransition.width !== width || layoutTransition.maximized !== maximized),
     });
@@ -123,9 +126,9 @@ function PreviewPanelShellFrame(
             ? "flex-1 border-l border-border"
             : "shrink-0 border-l border-border"
           : "w-full",
-        collapsible &&
+        animateWidth &&
           "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
-        collapsible && open && "[[data-panel-animations=true]_&]:starting:w-0!",
+        animateWidth && open && "[[data-panel-animations=true]_&]:starting:w-0!",
         collapsible && !open && "pointer-events-none",
       )}
       style={

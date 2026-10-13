@@ -127,6 +127,24 @@ The quoted text and comment count toward the message limit.
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.
 
+## Sidechats
+
+On web and desktop, select a passage in a completed assistant response and choose
+**Ask in sidechat** to open a separate conversation forked at that response in a side
+panel. It uses the regular message composer with the selected passage attached
+as a quote. The panel shows only the sidechat's own messages. It starts with the
+context T3 can inherit through the selected provider's existing fork mechanism. Later messages
+in either conversation do not automatically enter the other. For conversations imported from an
+older version, the sidechat receives the saved history up to the selected response.
+
+Sidechats stay out of the main sidebar. Click a marked passage or use the
+Sidechats menu in the parent conversation header to reopen its history. Closing the panel keeps the
+conversation saved. Deleting the parent conversation deletes its sidechats too.
+
+Sidechats support Codex and Claude. They can discuss the inherited conversation and
+read project files, but cannot edit files or request elevated access. Project changes
+remain part of the main conversation. Sidechats do not create file checkpoints.
+
 ## Recall a sent prompt
 
 Press `ArrowUp` in an empty composer to bring back the last prompt you sent in this thread. Press

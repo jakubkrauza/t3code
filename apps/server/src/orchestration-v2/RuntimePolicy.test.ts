@@ -1,5 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
+  MessageId,
+  ProviderDriverKind,
   type ModelSelection,
   type OrchestrationV2AppThread,
   ProjectId,
@@ -69,6 +72,13 @@ const supportedRuntimeModesByInstance = new Map<ProviderInstanceId, ReadonlyArra
 ]);
 const providerInstanceFor = (instanceId: ProviderInstanceId) =>
   ({
+    driverKind: ProviderDriverKind.make(
+      instanceId === grokInstanceId
+        ? "grok"
+        : instanceId === ProviderInstanceId.make("claude")
+          ? "claudeAgent"
+          : "codex",
+    ),
     snapshot: {
       getSnapshot: Effect.succeed({
         supportedRuntimeModes: supportedRuntimeModesByInstance.get(instanceId),
@@ -154,3 +164,44 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
     }),
   );
 });
+
+it.effect(
+  "enforces read-only on legacy full-access sidechats and refuses unsupported providers",
+  () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const thread = {
+        ...makeThread({ now, worktreePath: null, runtimeMode: "full-access" }),
+        interactionMode: "plan" as const,
+        sidechatSource: {
+          parentThreadId: ThreadId.make("parent"),
+          citation: {
+            version: 1 as const,
+            environmentId: EnvironmentId.make("local"),
+            threadId: ThreadId.make("parent"),
+            messageId: MessageId.make("message"),
+            text: "quote",
+            start: 0,
+            end: 5,
+            prefix: "",
+            suffix: "",
+          },
+        },
+      };
+      for (const instanceId of [providerInstanceId, ProviderInstanceId.make("claude")]) {
+        const resolved = yield* policy.resolve({
+          thread,
+          modelSelection: { ...modelSelection, instanceId },
+        });
+        assert.equal(resolved.runtimeMode, "approval-required");
+        assert.equal(resolved.interactionMode, "default");
+        assert.equal(resolved.approvalPolicy, "never");
+        assert.deepEqual(resolved.sandboxPolicy, { type: "readOnly" });
+      }
+      const rejected = yield* policy
+        .resolve({ thread, modelSelection: { ...modelSelection, instanceId: grokInstanceId } })
+        .pipe(Effect.flip);
+      assert.equal(rejected._tag, "SidechatProviderUnsupportedError");
+    }).pipe(Effect.provide(layerTest)),
+);

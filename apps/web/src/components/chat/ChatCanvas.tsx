@@ -19,11 +19,13 @@ import { observeResize } from "../../lib/observeResize";
 export function ChatCanvas({
   composerOverlayElement,
   detailsCardTopInset = 0,
+  layoutKey,
   children,
   ...props
 }: Omit<ComponentProps<"div">, "className" | "style" | "ref"> & {
   composerOverlayElement: HTMLElement | null;
   detailsCardTopInset?: number;
+  layoutKey?: number | undefined;
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
@@ -68,45 +70,55 @@ export function ChatCanvas({
     (key: string) => setPreview((current) => (current?.key === key ? null : current)),
     [],
   );
+  const measure = useCallback(() => {
+    const element = elementRef.current;
+    const probe = widthProbeRef.current;
+    if (!element || !probe) return;
+    const findBar =
+      detailsCardTopInset > 0 ? element.querySelector<HTMLElement>("[data-thread-find-bar]") : null;
+    const canvasBounds = element.getBoundingClientRect();
+    const findBarBounds = findBar?.getBoundingClientRect();
+    const styles = getComputedStyle(probe);
+    const next = {
+      findBarLeft: findBarBounds ? findBarBounds.left - canvasBounds.left : 0,
+      findBarRight: findBarBounds ? findBarBounds.right - canvasBounds.left : 0,
+      findBarBottom: findBarBounds ? findBarBounds.bottom - canvasBounds.top : 0,
+      width: element.clientWidth,
+      height: element.clientHeight,
+      padding: Number.parseFloat(styles.paddingLeft),
+      maxChatWidth: Number.parseFloat(styles.width),
+      minChatWidth: Number.parseFloat(styles.minWidth),
+      composerHeight: composerOverlayElement?.getBoundingClientRect().height ?? 0,
+      timelineGutter: timelineElement
+        ? (timelineElement.offsetWidth - timelineElement.clientWidth) / 2
+        : 0,
+    };
+    setMeasurements((current) =>
+      Object.keys(next).every(
+        (key) => current[key as keyof typeof current] === next[key as keyof typeof next],
+      )
+        ? current
+        : next,
+    );
+  }, [composerOverlayElement, timelineElement, detailsCardTopInset]);
+  // Parent panel changes can resize the canvas during a React commit.
+  // Measure then, before the virtualizer observes an intermediate row width.
+  useLayoutEffect(() => {
+    measure();
+    // eslint-disable-next-line react/exhaustive-effect-dependencies -- Sibling width changes require a measurement before paint.
+  }, [measure, layoutKey]);
   useLayoutEffect(() => {
     const element = elementRef.current;
     const probe = widthProbeRef.current;
     if (!element || !probe) return;
     const findBar =
       detailsCardTopInset > 0 ? element.querySelector<HTMLElement>("[data-thread-find-bar]") : null;
-    const measure = () => {
-      const canvasBounds = element.getBoundingClientRect();
-      const findBarBounds = findBar?.getBoundingClientRect();
-      const styles = getComputedStyle(probe);
-      const next = {
-        findBarLeft: findBarBounds ? findBarBounds.left - canvasBounds.left : 0,
-        findBarRight: findBarBounds ? findBarBounds.right - canvasBounds.left : 0,
-        findBarBottom: findBarBounds ? findBarBounds.bottom - canvasBounds.top : 0,
-        width: element.clientWidth,
-        height: element.clientHeight,
-        padding: Number.parseFloat(styles.paddingLeft),
-        maxChatWidth: Number.parseFloat(styles.width),
-        minChatWidth: Number.parseFloat(styles.minWidth),
-        composerHeight: composerOverlayElement?.getBoundingClientRect().height ?? 0,
-        timelineGutter: timelineElement
-          ? (timelineElement.offsetWidth - timelineElement.clientWidth) / 2
-          : 0,
-      };
-      setMeasurements((current) =>
-        Object.keys(next).every(
-          (key) => current[key as keyof typeof current] === next[key as keyof typeof next],
-        )
-          ? current
-          : next,
-      );
-    };
-    measure();
     const observed: Element[] = [element, probe];
     if (findBar) observed.push(findBar);
     if (composerOverlayElement) observed.push(composerOverlayElement);
     if (timelineElement) observed.push(timelineElement);
     return observeResize(observed, measure);
-  }, [composerOverlayElement, timelineElement, detailsCardTopInset]);
+  }, [composerOverlayElement, measure, timelineElement, detailsCardTopInset]);
   const context = useMemo(() => {
     const container = { width: measurements.width, height: measurements.height };
     const findBar =

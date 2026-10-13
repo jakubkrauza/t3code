@@ -31,7 +31,19 @@ export class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyR
   }
 }
 
-export const RuntimePolicyV2Error = Schema.Union([RuntimePolicyResolveError]);
+export class SidechatProviderUnsupportedError extends Schema.TaggedError<SidechatProviderUnsupportedError>()(
+  "SidechatProviderUnsupportedError",
+  { providerInstanceId: ProviderInstanceId },
+) {
+  override get message(): string {
+    return "Read-only sidechats currently support Codex and Claude only.";
+  }
+}
+
+export const RuntimePolicyV2Error = Schema.Union([
+  RuntimePolicyResolveError,
+  SidechatProviderUnsupportedError,
+]);
 export type RuntimePolicyV2Error = typeof RuntimePolicyV2Error.Type;
 
 export const RuntimePolicyV2Override = Schema.Struct({
@@ -62,8 +74,11 @@ export class RuntimePolicyV2 extends Context.Service<RuntimePolicyV2, RuntimePol
 export const layer: Layer.Layer<RuntimePolicyV2> = Layer.succeed(RuntimePolicyV2, {
   resolve: (input) =>
     Effect.succeed({
-      runtimeMode: input.thread.runtimeMode,
-      interactionMode: input.thread.interactionMode,
+      runtimeMode: input.thread.sidechatSource ? "approval-required" : input.thread.runtimeMode,
+      ...(input.thread.sidechatSource
+        ? { approvalPolicy: "never", sandboxPolicy: { type: "readOnly" } }
+        : {}),
+      interactionMode: input.thread.sidechatSource ? "default" : input.thread.interactionMode,
       cwd: input.thread.worktreePath,
     }),
 });
@@ -96,6 +111,15 @@ export const layerFromProjectStore: Layer.Layer<
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         const instance = yield* providerInstances.getInstance(input.modelSelection.instanceId);
+        if (
+          input.thread.sidechatSource &&
+          instance?.driverKind !== "codex" &&
+          instance?.driverKind !== "claudeAgent"
+        ) {
+          return yield* new SidechatProviderUnsupportedError({
+            providerInstanceId: input.modelSelection.instanceId,
+          });
+        }
         const supportedRuntimeModes =
           instance === undefined
             ? undefined
@@ -126,8 +150,13 @@ export const layerFromProjectStore: Layer.Layer<
             ),
           ));
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
-          interactionMode: input.thread.interactionMode,
+          runtimeMode: input.thread.sidechatSource
+            ? "approval-required"
+            : providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
+          ...(input.thread.sidechatSource
+            ? { approvalPolicy: "never", sandboxPolicy: { type: "readOnly" } }
+            : {}),
+          interactionMode: input.thread.sidechatSource ? "default" : input.thread.interactionMode,
           cwd,
         });
       }),

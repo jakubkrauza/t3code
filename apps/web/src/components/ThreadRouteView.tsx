@@ -3,7 +3,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import ChatView from "./ChatView";
+import { ThreadSidechatsView } from "./ThreadSidechatsView";
 import { resolveDraftPromotionNavigationTarget, threadHasStarted } from "./ChatView.logic";
 import { waitForDraftHeroTransition } from "./chat/draftHeroTransition";
 import { SidebarInset } from "./ui/sidebar";
@@ -169,7 +169,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   if (target.kind === "draft") {
     if (draftSession) {
       view = (
-        <ChatView
+        <ThreadSidechatsView
           key={target.draftId}
           draftId={target.draftId}
           environmentId={draftSession.environmentId}
@@ -181,7 +181,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     }
   } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
     view = (
-      <ChatView
+      <ThreadSidechatsView
         key={nextChatViewKey?.key}
         environmentId={target.threadRef.environmentId}
         threadId={target.threadRef.threadId}

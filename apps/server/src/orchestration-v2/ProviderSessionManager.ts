@@ -488,11 +488,17 @@ export const layerWithOptions = (
                 // the credential it started with, so a thread that detaches and
                 // re-attaches across a workspace handoff must come back to the
                 // same token or the process's tool calls fail auth.
-                const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
-                  yield* agentAccessSettings(threadId);
+                const sidechat = yield* projectionStore.getThread(threadId).pipe(
+                  Effect.map((thread) => thread.sidechatSource !== undefined),
+                  Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(true)),
+                  Effect.orDie,
+                );
+                const access = yield* agentAccessSettings(threadId);
+                const browserToolsAvailable = !sidechat && access.browser;
+                const deviceToolsAvailable = !sidechat && access.device;
                 const capabilities = new Set<
                   import("../mcp/McpInvocationContext.ts").McpCapability
-                >(["orchestration", "worktree", "pull-requests"]);
+                >(sidechat ? [] : ["orchestration", "worktree", "pull-requests"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
                 const existing = yield* mcpSessions.read(threadId);
@@ -518,6 +524,10 @@ export const layerWithOptions = (
                     resolved.thread.providerInstanceId === providerInstanceId &&
                     // A flipped browser-access setting must not survive through
                     // credential reuse: rotate so the new scope reflects it.
+                    resolved.capabilities.size === capabilities.size &&
+                    [...capabilities].every((capability) =>
+                      resolved.capabilities.has(capability),
+                    ) &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable
                   ) {
@@ -530,6 +540,7 @@ export const layerWithOptions = (
                   threadId,
                   providerInstanceId,
                   browserToolsAvailable,
+                  readOnly: sidechat,
                   capabilities,
                 });
                 yield* mcpSessions.set(credential.config);
